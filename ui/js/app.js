@@ -2,12 +2,12 @@
 
 import { startPolling, store, subscribe } from "./lib.js";
 import { login, off } from "./login.js";
-import { boot, idle, session } from "./screens.js";
+import { boot, game, idle, session } from "./screens.js";
 import { settings } from "./settings.js";
 import { setup } from "./setup.js";
 
 const app = document.getElementById("app");
-const screens = { boot, setup, login, settings, idle, session, off };
+const screens = { boot, setup, login, settings, idle, session, off, game };
 let current = null;
 let cleanup = null;
 let booted = false;
@@ -54,6 +54,10 @@ subscribe((st) => {
   document.documentElement.style.setProperty("--accent", st.device.accent || "#e8305e");
   if (st.display.scale !== lastScale) { lastScale = st.display.scale; layout(); }
   if (!booted) return;
+  // game mode owns the main monitor while it runs (RDP may still be on the second one)
+  const gaming = st.games && st.games.state !== "idle";
+  if (gaming) { if (current !== "game" && current !== "setup") go("game"); return; }
+  if (current === "game") { go(st.session ? "session" : "login"); return; }
   const inSession = Boolean(st.session);
   if (inSession && current !== "session" && current !== "setup") go("session");
   else if (!inSession && current === "session") go("login");

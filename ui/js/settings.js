@@ -1,6 +1,7 @@
 // Settings: people, servers, network, remote access, connection, this Dot, about.
 
 import { $, api, bind, html, icon, mount, refresh, setAdminToken, store, toast } from "./lib.js";
+import { gamesPanel } from "./games.js";
 import { screenPanel } from "./screen.js";
 import { confirmModal, pinPanel, preferencesPanel, profileForm, profileList, regionPanel, serverForm, serverList, soundPanel, tailscalePanel, wifiPanel } from "./parts.js";
 
@@ -12,6 +13,7 @@ const SECTIONS = [
   ["connection", "Connection", "sliders"],
   ["screen", "Screen", "monitor"],
   ["sound", "Sound", "volume"],
+  ["games", "Games", "gamepad"],
   ["device", "This Dot", "gear"],
   ["about", "About", "info"],
 ];
@@ -89,6 +91,11 @@ export function settings(root, { go, token }) {
     if (section === "sound") {
       title("Sound", "One volume for everything: Dot's slider, Windows' slider and the volume keys all move it.");
       cleanup = soundPanel(body);
+    }
+
+    if (section === "games") {
+      title("Games", "Stream games from a PC with Moonlight, straight to your main monitor.");
+      cleanup = gamesPanel(body);
     }
 
     if (section === "device") {

@@ -12,15 +12,9 @@ import os
 import threading
 import time
 
-from . import system
-
-try:
-    import pwd
-except ImportError:
-    pwd = None
+from . import kiosk, system
 
 DEV = system.DEV
-KIOSK_USER = os.environ.get("DOT_USER", "dot")
 OUTPUTS_CONF = os.environ.get("DOT_SWAY_OUTPUTS", "/var/lib/dot/sway-outputs.conf")
 UI_TITLE = "Dot"
 CLOCK_TITLE = "Dot Clock"
@@ -38,36 +32,11 @@ DEV_OUTPUTS = [
 ]
 
 
-def _session_env():
-    """SWAYSOCK and friends, written by session.sh when the kiosk starts."""
-    env = {"PATH": "/usr/local/bin:/usr/bin:/bin"}
-    if pwd is None:
-        return env
-    try:
-        uid = pwd.getpwnam(KIOSK_USER).pw_uid
-    except KeyError:
-        return env
-    env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
-    try:
-        with open(f"/run/user/{uid}/dot-session.env") as f:
-            for line in f:
-                k, _, v = line.strip().partition("=")
-                if k:
-                    env[k] = v
-    except OSError:
-        pass
-    return env
-
-
 def swaymsg(*args, raw=False):
     """Run swaymsg as the kiosk user. Returns parsed JSON (or text with raw=True), None on failure."""
-    if DEV:
+    if DEV or "SWAYSOCK" not in kiosk.env():
         return None
-    env = _session_env()
-    if "SWAYSOCK" not in env:
-        return None
-    cmd = ["runuser", "-u", KIOSK_USER, "--", "env", *[f"{k}={v}" for k, v in env.items()], "swaymsg", *args]
-    code, out, _ = system.run(cmd, timeout=8)
+    code, out, _ = kiosk.run(["swaymsg", *args], timeout=8)
     if code != 0:
         return None
     if raw:
@@ -287,6 +256,47 @@ class Displays:
 
     def session_ended(self):
         swaymsg('[app_id="at.yrlf.wl_mirror"] kill', raw=True)
+
+    def others(self):
+        main = self.main()
+        return [o for o in self.outputs if o["active"] and (not main or o["name"] != main["name"])]
+
+    def focus(self, name):
+        swaymsg(f"focus output {name}", raw=True)
+
+    def fastest_mode(self, name):
+        """For game mode: the main monitor's highest refresh at its current resolution (e.g. 1080p144)."""
+        o = next((x for x in self.outputs if x["name"] == name), None)
+        if not o or not o["mode"]:
+            return None
+        res = o["mode"].split("@")[0]
+        same = [m["value"] for m in o["modes"] if m["value"].startswith(res + "@")]
+        return max(same, key=lambda v: float(v.split("@")[1].rstrip("Hz")), default=o["mode"])
+
+    def set_mode(self, name, mode):
+        o = next((x for x in self.outputs if x["name"] == name), None)
+        if o and mode:
+            swaymsg(f'output "{o["id"]}" mode {mode}', raw=True)
+            if DEV:
+                for d in self._dev_outputs:
+                    if d["name"] == name:
+                        r = mode.split("@")[1].rstrip("Hz")
+                        d["current_mode"] = {**d["current_mode"], "refresh": round(float(r) * 1000)}
+            self.outputs = self.read()
+
+    def exec_side(self, kind, url):
+        """A browser or the game panel, full screen on the focused monitor (see system/side.sh)."""
+        if DEV:
+            print(f"[dev] side {kind} {url}", flush=True)
+            return
+        swaymsg(f"exec /usr/lib/dot/system/side.sh {kind} {url}", raw=True)
+
+    def close_side(self, kind):
+        if not DEV:
+            kiosk.run(["pkill", "-f", f"chromium-{kind}"], timeout=5)
+
+    def power(self, name, on):
+        swaymsg(f"output {name} power {'on' if on else 'off'}", raw=True)
 
     def focus_main(self):
         main = self.main()

@@ -11,6 +11,10 @@ args = parser.parse_args()
 
 if args.dev:
     os.environ["DOT_DEV"] = "1"
+    # keep everything a real Pi writes under /run and /var/lib inside .dev/
+    for key, path in (("DOT_INBOX", ".dev/inbox"), ("DOT_STANDBY_FILE", ".dev/standby.json"),
+                      ("DOT_SWAY_OUTPUTS", ".dev/sway-outputs.conf")):
+        os.environ.setdefault(key, path)
 
 from .server import serve  # noqa: E402  (system reads DOT_DEV at import)
 

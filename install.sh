@@ -5,6 +5,7 @@
 #
 # Options (after `sudo bash -s --`):
 #   --tailscale     also install Tailscale (for servers on other networks)
+#   --no-games      skip Moonlight (game mode)
 #   --no-reboot     don't reboot at the end
 #   --no-splash     keep the normal text boot instead of the Dot splash
 #   --branch NAME   install from another branch (default: main)
@@ -14,6 +15,7 @@ set -euo pipefail
 REPO="${DOT_REPO:-madmaxvoltro/dotos}"
 BRANCH="main"
 TAILSCALE=0
+GAMES=1
 REBOOT=1
 SPLASH=1
 UPDATE=0
@@ -21,6 +23,7 @@ UPDATE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --tailscale) TAILSCALE=1 ;;
+    --no-games) GAMES=0 ;;
     --no-reboot) REBOOT=0 ;;
     --no-splash) SPLASH=0 ;;
     --branch) BRANCH="$2"; shift ;;
@@ -83,6 +86,16 @@ if [ "$UPDATE" -eq 0 ]; then
   # shellcheck disable=SC2086
   apt-get install -y -q --no-install-recommends $PKGS
 
+  if [ "$GAMES" -eq 1 ] && ! command -v moonlight-qt >/dev/null; then
+    step "Installing Moonlight (game mode)"
+    if ! apt_has moonlight-qt; then
+      # Moonlight's own repository has builds for Raspberry Pi OS
+      curl -1sLf https://dl.cloudsmith.io/public/moonlight-game-streaming/moonlight-qt/setup.deb.sh \
+        | distro=raspbian codename="$VERSION_CODENAME" bash >/dev/null 2>&1 || true
+    fi
+    apt-get install -y -q moonlight-qt || info "Moonlight isn't available for this OS yet: game mode is off"
+  fi
+
   if [ "$TAILSCALE" -eq 1 ] && ! command -v tailscale >/dev/null; then
     step "Installing Tailscale"
     curl -fsSL https://tailscale.com/install.sh | sh
@@ -115,7 +128,7 @@ cp -r "$SRC/dotd" "$SRC/system" "$PREFIX/"
 mkdir -p "$PREFIX/ui"
 find "$PREFIX/ui" -mindepth 1 -maxdepth 1 ! -name fonts -exec rm -rf {} +
 cp -r "$SRC/ui/." "$PREFIX/ui/"
-chmod +x "$PREFIX/system/session.sh" "$PREFIX/system/clock.sh"
+chmod +x "$PREFIX/system/session.sh" "$PREFIX/system/clock.sh" "$PREFIX/system/side.sh"
 cp "$SRC/install.sh" "$SRC/uninstall.sh" "$PREFIX/"
 chmod +x "$PREFIX/install.sh" "$PREFIX/uninstall.sh"
 [ -f "$SRC/VERSION" ] && cp "$SRC/VERSION" "$PREFIX/VERSION"
@@ -148,7 +161,11 @@ echo i2c-dev > /etc/modules-load.d/dot.conf
 modprobe i2c-dev 2>/dev/null || true
 
 install -d -m 700 /etc/dot
-install -d -o "$KIOSK_USER" -g "$KIOSK_USER" /var/lib/dot /var/lib/dot/chromium /var/lib/dot/chromium-clock /media/dot
+install -d -o "$KIOSK_USER" -g "$KIOSK_USER" /var/lib/dot /var/lib/dot/chromium /var/lib/dot/chromium-clock \
+  /var/lib/dot/chromium-browser /var/lib/dot/chromium-panel /media/dot
+# \\tsclient\dot inside Windows: how Game.exe talks to Dot (recreated at every boot, /run is in memory)
+printf 'd /run/dot 0755 root root -\nd /run/dot/inbox 0770 %s %s -\n' "$KIOSK_USER" "$KIOSK_USER" > /etc/tmpfiles.d/dot.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/dot.conf
 [ -f /var/lib/dot/sway-outputs.conf ] || : > /var/lib/dot/sway-outputs.conf
 [ -f /etc/dot/kiosk.env ] || printf 'XKB_DEFAULT_LAYOUT=us\nDOT_SCALE=1.00\n' > /etc/dot/kiosk.env
 

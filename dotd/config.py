@@ -52,14 +52,23 @@ DEFAULTS = {
         "followWindows": True,  # Windows' volume moves the real volume (RDP volume messages)
         "target": "auto",  # auto | monitor | pi: where "the volume" lives
     },
+    "games": {
+        "hosts": [],  # separate gaming PCs: {id, name, address, mac}
+        "monitor2": "rdp",  # rdp | browser | panel | clock | off, while a game plays
+        "browserUrl": "https://www.youtube.com",
+        "codec": "auto",  # auto | HEVC | H.264 | AV1
+        "bitrate": "auto",  # auto or Mbps
+        "fps": "max",  # max (the main monitor's fastest refresh) or a number
+    },
     "tailscale": {"enabled": False},
-    "features": {"gameMode": False},
+    "features": {"gameMode": True},
     "servers": [],
     "profiles": [],
     "lastProfile": None,
 }
 
-SERVER_FIELDS = {"name", "host", "port", "domain", "gateway"}
+SERVER_FIELDS = {"name", "host", "port", "domain", "gateway", "games"}
+GAME_FLOWS = ("off", "same", "other", "server")
 PROFILE_FIELDS = {"name", "username", "domain", "servers", "defaultServer", "color"}
 PROFILE_COLORS = ["#2c2c2e", "#3a2a5c", "#1f3d5a", "#1f4a3a", "#5a3a1f", "#5a1f33"]
 
@@ -141,6 +150,10 @@ class Config:
             raise ValueError("Address is required")
         clean["port"] = int(clean.get("port") or 3389)
         clean["name"] = (clean.get("name") or "").strip() or clean["host"]
+        if "games" in clean:
+            g = clean["games"] if isinstance(clean["games"], dict) else {}
+            clean["games"] = {"mode": g.get("mode") if g.get("mode") in GAME_FLOWS else "off",
+                              "host": g.get("host"), "mac": g.get("mac")}
 
         def fn(d):
             sid = payload.get("id")
@@ -217,13 +230,13 @@ class Config:
     # settings ------------------------------------------------------------
 
     def patch_settings(self, payload):
-        allowed = {"device", "display", "rdp", "screen", "audio", "tailscale", "features"}
+        allowed = {"device", "display", "rdp", "screen", "audio", "games", "tailscale", "features"}
 
         def fn(d):
             for section, values in payload.items():
                 if section not in allowed or not isinstance(values, dict):
                     continue
-                values = {k: v for k, v in values.items() if k != "adminPin"}
+                values = {k: v for k, v in values.items() if k not in ("adminPin", "hosts")}
                 d[section].update(values)
 
         self.mutate(fn)

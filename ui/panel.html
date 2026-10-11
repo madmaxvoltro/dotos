@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dot Game Panel</title>
+<link rel="stylesheet" href="/css/dot.css">
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+// Game mode's second monitor: what's playing, the time, volume, and the way back to work.
+import { $, api, bind, html, icon, mount, startPolling, store, watch } from "/js/lib.js";
+import { soundPanel } from "/js/parts.js";
+
+const app = document.getElementById("app");
+function layout() {
+  const s = Math.min(innerWidth / 1280, innerHeight / 720);
+  app.style.width = `${innerWidth / s}px`;
+  app.style.height = `${innerHeight / s}px`;
+  app.style.transform = `scale(${s})`;
+}
+addEventListener("resize", layout);
+layout();
+
+mount(app, html`<div class="screen gamepanel">
+  <div class="top"><div class="mark"></div><div class="time" id="time"></div></div>
+  <div class="now">
+    <div class="small" id="label">Game mode</div>
+    <div class="title" id="game" style="font-size:44px;margin-top:6px"></div>
+    <div class="lead" id="host"></div>
+  </div>
+  <div class="bottom">
+    <div class="panel" style="width:360px;padding:10px"><div id="sound"></div></div>
+    <div class="stack" style="width:300px">
+      <button class="btn btn-primary" data-on-click="leave">${icon("back", 16)} Back to work</button>
+      <button class="btn btn-ghost btn-danger" data-on-click="quit">Quit the game</button>
+      <p class="small" style="margin:4px 0 0;line-height:1.5">Ctrl + Alt + Shift + Z frees the mouse from the game so it can reach this screen.</p>
+    </div>
+  </div>
+</div>`);
+bind(app, {
+  leave: () => api("/api/games/stop", {}),
+  quit: () => api("/api/games/stop", { quit: true }),
+});
+
+const tick = () => {
+  $("#time").textContent = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const g = store.state?.games;
+  if (g?.info?.started) {
+    const m = Math.floor((Date.now() / 1000 - g.info.started) / 60);
+    $("#label").textContent = m < 1 ? "Just started" : m < 60 ? `Playing for ${m} min` : `Playing for ${Math.floor(m / 60)} h ${m % 60} min`;
+  }
+};
+setInterval(tick, 1000);
+
+startPolling();
+let soundMounted = false;
+watch((st) => [st.games.info], (st) => {
+  const info = st.games.info || {};
+  $("#game").textContent = info.app || "";
+  $("#host").textContent = info.host ? `Streaming from ${info.host}` : "";
+  if (!soundMounted) { soundMounted = true; soundPanel($("#sound"), { compact: true }); }
+  tick();
+});
+</script>
+</body>
+</html>

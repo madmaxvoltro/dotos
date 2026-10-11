@@ -1,6 +1,6 @@
 // Boot, idle clock and the in-session backdrop.
 
-import { $, html, mount, refresh, store, watch } from "./lib.js";
+import { $, api, bind, html, icon, mount, refresh, store, watch } from "./lib.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -149,4 +149,33 @@ export function session(root) {
   };
   render(store.state);
   return watch((st) => [st.session?.serverId, st.connecting?.serverId], render);
+}
+
+/** Game mode on the main monitor: the shutter from the board while it switches, then (under Moonlight) what's playing. */
+export function game(root) {
+  mount(root, html`<div class="screen shutter">
+    <div class="panel-top"></div><div class="panel-bottom"></div>
+    <div class="center">
+      <div class="mark"></div>
+      <div class="msg" id="msg" aria-live="polite"></div>
+      <div class="sub" id="sub"></div>
+      <div class="row" id="actions" style="margin-top:12px"></div>
+    </div></div>`);
+  requestAnimationFrame(() => $(".shutter", root).classList.add("closed"));
+  const render = (st) => {
+    const g = st.games;
+    const info = g.info || {};
+    $("#msg", root).textContent = info.error ? "Couldn't start game mode" : g.state === "stopping" ? "Back to work" : info.step || "Switching to game mode";
+    $("#sub", root).textContent = info.error || (g.state === "playing" ? "Ctrl+Alt+Shift+Q leaves the game. Ctrl+Alt+Shift+Z frees the mouse." : "");
+    const actions = $("#actions", root);
+    mount(actions, g.state === "playing" ? html`
+      <button class="btn btn-raised" data-on-click="leave">${icon("back", 16)} Back to work</button>
+      <button class="btn btn-ghost btn-danger" data-on-click="quit">Quit the game</button>` : "");
+    bind(actions, {
+      leave: () => api("/api/games/stop", {}),
+      quit: () => api("/api/games/stop", { quit: true }),
+    });
+  };
+  render(store.state);
+  return watch((st) => [st.games.state, st.games.info], render);
 }

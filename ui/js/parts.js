@@ -14,6 +14,10 @@ export const ACCOUNT_ERRORS = {
   noclient: ["info", "FreeRDP is missing", "Run the installer again to add it."],
   noserver: ["server", "No server set up", "Add a server in Settings."],
   unknown: ["info", "Couldn't sign in", "Something unexpected happened. Try again."],
+  off: ["gamepad", "Game mode isn't set up", "Choose how this server plays games in Settings → Games."],
+  nomoonlight: ["gamepad", "Moonlight isn't installed", "Run the installer again without --no-games."],
+  nohost: ["gamepad", "No gaming PC chosen", "Pick one in Settings → Games."],
+  busy: ["gamepad", "Game mode is already starting", "Give it a moment."],
 };
 
 export function modal(markup, handlers = {}) {

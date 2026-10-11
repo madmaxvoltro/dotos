@@ -13,15 +13,9 @@ import subprocess
 import threading
 import time
 
-from . import system
+from . import kiosk, system
 
-try:  # POSIX only; dev mode on Windows never needs them
-    import grp
-    import pwd
-except ImportError:
-    grp = pwd = None
-
-KIOSK_USER = os.environ.get("DOT_USER", "dot")
+INBOX = os.environ.get("DOT_INBOX", "/run/dot/inbox")  # shared into Windows as \\tsclient\dot
 
 # preference order: native Wayland first, X11 (through Xwayland) as fallback
 CLIENTS = ["sdl-freerdp3", "sdl-freerdp", "wlfreerdp3", "xfreerdp3", "wlfreerdp", "xfreerdp"]
@@ -100,7 +94,7 @@ def windows_scale(screen, outputs):
     return max(100, min(500, pct))  # what Windows accepts
 
 
-def build_args(client, server, profile, password, cfg, auth_only=False, outputs=()):
+def build_args(client, server, profile, password, cfg, auth_only=False, outputs=(), single=False):
     v3 = client["major"] >= 3
     rdp, screen = cfg["rdp"], cfg["screen"]
     domain = profile.get("domain") or server.get("domain")
@@ -129,8 +123,10 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
         args.append("/clipboard" if v3 else "+clipboard")
     if rdp.get("usbDrives"):
         args.append("/drive:USB,/media/dot")
+    if (server.get("games") or {}).get("mode", "off") != "off":
+        args.append(f"/drive:dot,{INBOX}")  # Game.exe talks to Dot through this folder
     active = [o for o in outputs if o.get("active")]
-    if screen.get("mode", "extend") == "extend" and len(active) > 1:
+    if not single and screen.get("mode", "extend") == "extend" and len(active) > 1:
         args.append("/multimon")  # sends Windows each monitor's size, position and which one is primary
     else:
         args.append("/dynamic-resolution")  # follows resolution changes; FreeRDP pairs it badly with /multimon
@@ -140,42 +136,13 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
     return args
 
 
-def _session_env():
-    """Environment of the running kiosk (written by session.sh) so windows land in the kiosk session."""
-    env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": os.environ.get("LANG", "C.UTF-8")}
-    try:
-        pw = pwd.getpwnam(KIOSK_USER)
-    except KeyError:
-        return env, None
-    env["HOME"] = pw.pw_dir
-    env["USER"] = KIOSK_USER
-    env_file = f"/run/user/{pw.pw_uid}/dot-session.env"
-    try:
-        with open(env_file) as f:
-            for line in f:
-                key, _, value = line.strip().partition("=")
-                if key:
-                    env[key] = value
-    except OSError:
-        env["XDG_RUNTIME_DIR"] = f"/run/user/{pw.pw_uid}"
-        env["WAYLAND_DISPLAY"] = "wayland-0"
-    env.setdefault("SDL_VIDEODRIVER", "wayland")
-    return env, pw
-
-
 def _popen(client, args):
+    """FreeRDP in the kiosk session. FreeRDP 3 reads its arguments (password included) from stdin."""
     v3 = client["major"] >= 3
-    env, pw = _session_env()
-    kwargs = {"env": env, "stdin": subprocess.PIPE, "stdout": subprocess.PIPE,
-              "stderr": subprocess.STDOUT, "text": True}
-    if pw is not None and os.geteuid() == 0:
-        groups = [g.gr_gid for g in grp.getgrall() if KIOSK_USER in g.gr_mem]
-        kwargs.update(user=pw.pw_uid, group=pw.pw_gid, extra_groups=groups, cwd=pw.pw_dir)
+    cmd = [client["bin"], "/args-from:stdin"] if v3 else [client["bin"], *args]
+    proc = kiosk.popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if v3:
-        proc = subprocess.Popen([client["bin"], "/args-from:stdin"], **kwargs)
         proc.stdin.write("\n".join(args) + "\n")
-    else:
-        proc = subprocess.Popen([client["bin"], *args], **kwargs)
     proc.stdin.close()
     return proc
 
@@ -199,24 +166,26 @@ def check_password(client, server, profile, password, cfg, timeout=25):
 class Session:
     """One running RDP session; calls on_end(reason) when FreeRDP exits."""
 
-    def __init__(self, client, server, profile, password, cfg, on_end, outputs=()):
+    def __init__(self, client, server, profile, password, cfg, on_end, outputs=(), single=False):
         self.server_id = server["id"]
         self.profile_id = profile["id"]
         self.started = time.time()
         self.on_end = on_end
         self.stop_reason = None
+        self.expected = None  # an ending Dot asked for (game mode taking the session over)
+        self.single = single
         if system.DEV:
             self.proc = None
             threading.Thread(target=self._dev_wait, daemon=True).start()
             return
-        self.proc = _popen(client, build_args(client, server, profile, password, cfg, outputs=outputs))
+        self.proc = _popen(client, build_args(client, server, profile, password, cfg, outputs=outputs, single=single))
         threading.Thread(target=self._wait, daemon=True).start()
 
     def _wait(self):
         out = self.proc.stdout.read() if self.proc.stdout else ""
         code = self.proc.wait()
-        if self.stop_reason:
-            self.on_end(self.stop_reason, "")
+        if self.stop_reason or self.expected:
+            self.on_end(self.stop_reason or self.expected, "")
         elif code in NORMAL_EXITS:
             self.on_end("signed_out", "")
         else:
@@ -226,7 +195,7 @@ class Session:
         end = time.time() + 45
         while time.time() < end and not self.stop_reason:
             time.sleep(0.2)
-        self.on_end(self.stop_reason or "signed_out", "")
+        self.on_end(self.stop_reason or self.expected or "signed_out", "")
 
     def stop(self, reason="stopped"):
         """End the session from Dot's side; Windows keeps it as a disconnected session."""

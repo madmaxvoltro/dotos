@@ -143,6 +143,8 @@ button.item:hover, .item.on { background: var(--raised); }
 .links { display: flex; gap: 6px; margin-top: 6px; }
 .links button { padding: 8px 14px; border-radius: 10px; color: rgba(255,255,255,.6); font-size: 14px; transition: background 200ms ease, color 200ms ease; }
 .links button:hover { background: var(--surface); color: var(--text); }
+.links button { display: inline-flex; align-items: center; gap: 8px; }
+.links button.on { background: var(--surface); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
 
 .dock { position: absolute; right: 32px; bottom: 32px; display: flex; align-items: center; padding: 6px 6px 6px 14px; border-radius: 20px; transition: background 200ms ease; }
 .dock:hover, .dock.open { background: var(--surface); }
@@ -167,6 +169,17 @@ button.item:hover, .item.on { background: var(--raised); }
 .session { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
 .session .mark { width: 56px; height: 56px; }
 .session .msg { font-size: 18px; font-weight: 500; color: rgba(255,255,255,.7); }
+
+/* game mode shutter (from the design board) ------------------------------------------------------------- */
+.shutter .panel-top, .shutter .panel-bottom { position: absolute; left: 0; right: 0; height: 50%; background: #0a0a0a; transition: transform 700ms cubic-bezier(.77, 0, .18, 1); }
+.shutter .panel-top { top: 0; transform: translateY(-101%); }
+.shutter .panel-bottom { bottom: 0; transform: translateY(101%); }
+.shutter.closed .panel-top, .shutter.closed .panel-bottom { transform: none; }
+.shutter .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; opacity: 0; transition: opacity 300ms ease 500ms; text-align: center; padding: 0 40px; }
+.shutter.closed .center { opacity: 1; }
+.shutter .mark { width: 56px; height: 56px; }
+.shutter .msg { font-size: 18px; font-weight: 500; color: rgba(255,255,255,.7); }
+.shutter .sub { font-size: 14px; color: rgba(255,255,255,.45); max-width: 520px; line-height: 1.5; min-height: 21px; }
 
 /* idle clock --------------------------------------------------------------------------- */
 .idle { cursor: none; }
@@ -240,3 +253,10 @@ button.item:hover, .item.on { background: var(--raised); }
 .mon .handle.sw { left: 3px; bottom: 3px; cursor: nesw-resize; }
 .mon.sel .badge { left: 20px; }
 .mon .badge { position: absolute; top: 6px; left: 8px; font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 6px; background: var(--accent); }
+
+/* game panel (second monitor in game mode) --------------------------------------------------------------- */
+.gamepanel { padding: 56px 72px; display: flex; flex-direction: column; justify-content: space-between; }
+.gamepanel .top { display: flex; align-items: center; justify-content: space-between; }
+.gamepanel .top .mark { width: 28px; height: 28px; }
+.gamepanel .top .time { font-size: 44px; font-weight: 300; letter-spacing: -0.02em; }
+.gamepanel .bottom { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; }

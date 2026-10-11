@@ -8,7 +8,8 @@ Dot boots straight into a black screen with one white dot, asks for your Windows
 
 ## Features
 
-- **Sign in with your Windows password.** Dot checks it against the server first, so a wrong password, an expired password, a locked account or a missing Remote Desktop permission each get a clear message. Passwords are never stored.
+- **Sign in with your Windows password.** Dot checks it against the server first, so a wrong password, an expired password, a locked account or a missing Remote Desktop permission each get a clear message. Passwords are never written to disk.
+- **Game mode.** Open **Game** inside Windows (or press Game mode on the login screen) and the game streams to your main monitor with Moonlight, while Windows stays on the second monitor. When you're done, you're back at work, no password needed.
 - **Several people, several servers.** Each person has a default server and a switcher under their name. If the default doesn't answer, Dot tries the next one.
 - **Set up on the screen itself.** After installing, the Pi walks you through keyboard, network, Tailscale (optional), servers and people.
 - **Two monitors, arranged like your desk.** Drag the monitors into place at their real size, resize them from the corners, and Windows gets exactly that layout. Extend, main-only or mirror.
@@ -64,12 +65,14 @@ Options go after `sudo bash -s --`, for example `... | sudo bash -s -- --tailsca
 | `--tailscale` | Also installs Tailscale, so the Pi can reach servers on other networks |
 | `--no-splash` | Keeps the normal text boot instead of the Dot splash |
 | `--no-reboot` | Doesn't restart at the end |
+| `--no-games` | Skips Moonlight (game mode) |
 | `--branch dev` | Installs from another branch |
 
 The installer adds:
 - **Kiosk:** sway (locked down: no bar, no shortcuts) and Chromium for the UI
 - **Remote Desktop:** FreeRDP 3
 - **System:** NetworkManager, PipeWire, and `ddcutil` plus the CEC tools for monitor control
+- **Game mode:** Moonlight
 
 It then creates a restricted `dot` user, installs the services and the boot splash, and restarts.
 
@@ -94,7 +97,7 @@ After the restart the Pi shows **Set up**:
 
 ## Windows side
 
-Nothing to install. Dot uses Windows' own Remote Desktop.
+Nothing to install for everyday use. Dot uses Windows' own Remote Desktop. (Game mode is the one exception, see below.)
 
 - Turn on Remote Desktop: *Settings → System → Remote Desktop*.
 - The user must be allowed to sign in remotely (an administrator, or a member of *Remote Desktop Users*).
@@ -132,6 +135,38 @@ Everything comes back when the monitor turns on. The system disk, network adapte
 
 Good to know: Remote Desktop runs at up to 60 fps, so a 144 Hz monitor works but the session won't use the extra refreshes. The Pi 5 decodes the picture on its CPU. That's plenty for office work on two 4K screens, but full-screen 4K video on both at once will drop frames.
 
+## Game mode
+
+Games stream from a Windows PC to the Pi with [Moonlight](https://moonlight-stream.org), from [Sunshine](https://github.com/LizardByte/Sunshine) on the PC. On a Pi 5 the stream is decoded in hardware (HEVC), so 4K60 or 1080p144 is realistic on a wired network.
+
+**Set it up:**
+1. **On the gaming PC**, in PowerShell as administrator:
+
+   ```powershell
+   irm https://raw.githubusercontent.com/madmaxvoltro/dotos/main/windows/install.ps1 | iex
+   ```
+
+   This installs Sunshine (with winget), **Game** on the desktop and in the Start menu, and Dot Helper in the tray. Game and Dot Helper are compiled on the PC from [`windows/DotHelper.cs`](windows/DotHelper.cs) with the C# compiler that ships with Windows, so no prebuilt program is downloaded.
+2. **On the Dot:** open Settings → Games, choose how each server plays games, then press **Pair**. If Dot Helper is running and you're signed in to that PC, the PIN is entered for you; otherwise type it into Sunshine's web page.
+
+**Three setups, chosen per server:**
+
+| Setup | While you play |
+| --- | --- |
+| **This PC**: the PC you work on is the gaming PC | Windows moves to the game stream. The second monitor shows the game panel, a browser or the clock. |
+| **Other PC**: a separate gaming PC | Windows stays on your second monitor and keeps running |
+| **Side by side**: Windows Server | Games in the console session, work in Remote Desktop, both at once |
+
+**Playing:**
+- Open **Game** inside your Dot session (`Game.exe "Steam Big Picture"` opens a specific app), or press **Game mode** on the login screen and sign in.
+- Dot runs the shutter animation, wakes the PC if it's asleep (Wake-on-LAN), switches the main monitor to its fastest refresh, and starts the stream.
+- **Ctrl+Alt+Shift+Z** frees the mouse to reach the second monitor. **Ctrl+Alt+Shift+Q** leaves the game.
+- **Back to work** (on the panel, in the tray, or by leaving the game) returns you to Windows without retyping your password.
+
+**How Windows and the Dot talk:** Dot shares a folder into the Remote Desktop session (`\\tsclient\dot`). Game.exe drops a small command file there and reads Dot's status back. There's no network port and no plugin, and it only works from inside your own signed-in session.
+
+**About your password:** to reconnect after a game without asking, Dot keeps the Windows password **in memory only** while you're signed in. It's wiped when you sign out, when standby locks the session, at shutdown, and whenever Dot restarts. It's never written to disk.
+
 ## Sound
 
 There is one volume. Dot's slider (the speaker button in the dock), Windows' slider and the keyboard's volume keys all move it.
@@ -151,11 +186,12 @@ dotd (root, 127.0.0.1:7777, Python standard library only)
   ├─ displays.py            arrangement, modes, scale (swaymsg, EDID)
   ├─ monitor.py             power state and controls (DDC/CI, CEC, hot-plug), standby
   ├─ audio.py               outputs and one volume (PipeWire, follows Windows)
+  ├─ games.py               game mode: Moonlight, pairing, Wake-on-LAN, \\tsclient\dot commands
   ├─ rdp.py                 FreeRDP: password check, then the session
   └─ system.py              network (nmcli), Tailscale, power
 ```
 
-The password goes from the UI to `dotd` over localhost, then to FreeRDP on stdin (`/args-from:stdin`). It is never written to disk and never appears in the process list. On FreeRDP 2 (Bookworm) it has to go on the command line, so Trixie is recommended.
+The password goes from the UI to `dotd` over localhost, then to FreeRDP on stdin (`/args-from:stdin`). It is never written to disk and never appears in the process list; `dotd` keeps it in memory while you're signed in so game mode can reconnect. On FreeRDP 2 (Bookworm) it has to go on the command line, so Trixie is recommended.
 
 ## Repository layout
 
@@ -165,6 +201,7 @@ The password goes from the UI to `dotd` over localhost, then to FreeRDP on stdin
 | `dotd/` | The device daemon (Python, no dependencies) |
 | `ui/` | The on-screen interface (HTML, CSS, JavaScript modules; no build step) |
 | `system/` | systemd units, sway config, kiosk session scripts, boot splash, udev rule |
+| `windows/` | Game mode's Windows side: `install.ps1` and `DotHelper.cs` (Game.exe and the tray helper) |
 
 ## Developing
 
@@ -187,6 +224,7 @@ Dev-mode helpers:
 - A server address containing `off` counts as unreachable.
 - POST `{"on": false}` or `{"on": true}` to `/api/dev/monitor` to turn the main monitor off or on.
 - POST `{"volume": 35}` to `/api/dev/stream` to act as Windows changing its volume.
+- POST `{"cmd": "game", "app": "Steam Big Picture"}` to `/api/dev/game` to act as Game.exe. In dev mode `\\tsclient\dot` is `.dev/inbox`, so the real Game.exe works too: build it (below) and run it with `DOT_SHARE` set to that folder.
 - Add `?screen=login`, `?screen=idle` and so on to the URL to jump to a screen.
 
 The UI fonts (Geist) are downloaded by the installer. For local development, fetch them once:
@@ -195,13 +233,18 @@ The UI fonts (Geist) are downloaded by the installer. For local development, fet
 curl -fsSL -o ui/fonts/Geist-Variable.woff2 https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Variable.woff2
 ```
 
+Build Game.exe and Dot Helper on Windows (no SDK needed):
+
+```powershell
+& "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /target:winexe /out:Game.exe /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll /r:System.Security.dll windows\DotHelper.cs
+```
+
 To install from a local checkout instead of GitHub, copy the folder to the Pi and run `sudo ./install.sh`.
 
 Logs: `journalctl -u dotd -u dot-kiosk -f`. Uninstall: `sudo /usr/lib/dot/uninstall.sh` (add `--purge` to remove settings too).
 
 ## Roadmap
 
-- **Game mode:** a separate low-latency streaming mode.
 - **Dot Helper for Windows:** an optional tray app that sends brightness and night light over Remote Desktop to the monitor.
 - **A ready-made image** that shows up in Raspberry Pi Imager, so there's no `curl` step.
 

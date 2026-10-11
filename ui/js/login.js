@@ -13,6 +13,7 @@ export function login(root, { go }) {
     popover: null, // "servers" | "wifi" | "power" | null
     tray: false,
     people: st0.profiles.length > 1 && !st0.lastProfile,
+    game: false, // "Game mode" pressed: signing in starts a game stream instead of Windows
   };
   const cleanups = [];
   const profile = () => store.state.profiles.find((p) => p.id === ui.profileId) || store.state.profiles[0];
@@ -58,7 +59,12 @@ export function login(root, { go }) {
     servers: () => togglePop("servers"),
     settings: openSettings,
     people: () => { ui.people = true; renderPeople(); },
-    game: () => toast("Game mode is coming soon"),
+    game: () => {
+      ui.game = !ui.game;
+      ui.error = null;
+      renderWho(); renderNotices(); renderBusy();
+      $("#pw", root).focus();
+    },
     openWifi: () => { ui.tray = true; ui.popover = "wifi"; renderDock(); renderPop(); },
   };
   bind(root, handlers);
@@ -78,14 +84,30 @@ export function login(root, { go }) {
     bind($("#pillwrap", root), handlers);
     const many2 = store.state.profiles.length > 1;
     mount($("#links", root), html`${many2 ? html`<button type="button" data-on-click="people">Other user</button>` : ""}
-      ${store.state.features.gameMode ? html`<button type="button" data-on-click="game">Game mode</button>` : ""}`);
+      ${gameReady() ? html`<button type="button" data-on-click="game" aria-pressed="${ui.game}" class="${ui.game ? "on" : ""}">${icon("gamepad", 16)} Game mode</button>` : ""}`);
     bind($("#links", root), handlers);
+  }
+
+  /** Game mode shows up once any of this person's servers has it turned on. */
+  function gameReady() {
+    const p = profile();
+    if (!store.state.features.gameMode || !p) return false;
+    return p.servers.some((id) => (store.state.servers.find((s) => s.id === id)?.games?.mode || "off") !== "off");
   }
 
   function renderNotices() {
     const st = store.state;
     const s = server();
     let card = "";
+    if (ui.game && !ui.error) {
+      const g = s?.games || {};
+      const host = g.mode === "other" ? st.games.hosts.find((h) => h.id === g.host)?.name : s?.name;
+      card = g.mode && g.mode !== "off"
+        ? notice("gamepad", `Game mode on ${host || s.name}`, "Sign in with your Windows password to start playing.")
+        : notice(...ACCOUNT_ERRORS.off);
+      mount($("#notices", root), card);
+      return;
+    }
     const errorCard = (kind) => {
       const [ic, t, sub] = ACCOUNT_ERRORS[kind] || ACCOUNT_ERRORS.unknown;
       return notice(ic, t, sub);
@@ -106,7 +128,8 @@ export function login(root, { go }) {
 
   function renderBusy() {
     const go = $("#go", root);
-    mount(go, ui.busy ? raw('<span class="spinner"></span>') : icon("arrow", 16, 2.4));
+    mount(go, ui.busy ? raw('<span class="spinner"></span>') : icon(ui.game ? "gamepad" : "arrow", 16, ui.game ? 2 : 2.4));
+    go.setAttribute("aria-label", ui.game ? "Sign in and play" : "Sign in");
     go.disabled = ui.busy;
     $("#pw", root).disabled = ui.busy;
   }
@@ -197,10 +220,11 @@ export function login(root, { go }) {
     if (!p || !pw.value || ui.busy) return;
     ui.busy = true; ui.error = null; ui.popover = null;
     renderBusy(); renderNotices(); renderPop();
-    const res = await api("/api/login", { profileId: p.id, serverId: s?.id, password: pw.value });
+    const res = await api("/api/login", { profileId: p.id, serverId: s?.id, password: pw.value, game: ui.game });
     ui.busy = false;
     if (res.ok) {
       pw.value = "";
+      ui.game = false;
       if (res.failover) toast(`${s.name} didn't answer, so Dot used ${store.state.servers.find((x) => x.id === res.serverId)?.name}`, 5000);
       await refresh(); // app switches to the session screen
       return;

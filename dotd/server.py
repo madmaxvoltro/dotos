@@ -9,7 +9,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import audio, displays, monitor, rdp, system
+from . import audio, displays, games, monitor, rdp, system
 from .config import Config
 
 def _version():
@@ -35,6 +35,9 @@ class Dot:
         self.tailscale = system.tailscale_status()
         self.reach = {}  # server id -> latency ms | None
         self.session = None
+        # the Windows password of whoever is signed in, kept in memory only (never on disk) so Dot can
+        # reconnect after game mode; wiped at sign-out, standby, shutdown and whenever dotd restarts
+        self.secret = None
         self.connecting = None  # {"profileId", "serverId"} while signing in
         self.last_end = None
         self.admin_tokens = {}
@@ -42,6 +45,7 @@ class Dot:
         self.displays = displays.Displays(cfg)
         self.monitor = monitor.Monitor(cfg, self.lock_session, lambda: (self.displays.main() or {}).get("name"))
         self.audio = audio.Audio(cfg, self.monitor)
+        self.games = games.Games(self)
         threading.Thread(target=self._watch, daemon=True).start()
 
     def _watch(self):
@@ -105,6 +109,7 @@ class Dot:
             "displays": self.displays.status(),
             "audio": {**self.audio.status(), **cfg["audio"]},
             "features": cfg["features"],
+            "games": {**self.games.status(), **{k: v for k, v in cfg["games"].items() if k != "hosts"}},
             "client": {"name": os.path.basename(self.client["bin"]), "major": self.client["major"]} if self.client else None,
             "session": session,
             "connecting": self.connecting,
@@ -113,8 +118,8 @@ class Dot:
 
     # sign in -------------------------------------------------------------------
 
-    def login(self, profile_id, server_id, password):
-        """Check the password, then start the session. Tries other servers if the chosen one is down."""
+    def login(self, profile_id, server_id, password, game=False):
+        """Check the password, then start the session (or game mode). Tries other servers if the chosen one is down."""
         profile = self.cfg.profile(profile_id)
         if not profile:
             return {"ok": False, "error": "unknown"}
@@ -143,25 +148,55 @@ class Dot:
                     return {"ok": False, "error": result, "serverId": server["id"]}
                 self.cfg.mutate(lambda d: d.update(lastProfile=profile_id))
                 self.last_end = None
-                outputs = self.displays.status()["outputs"]
-                self.displays.focus_main()  # a single-screen session opens on the main monitor
-                self.session = rdp.Session(self.client, server, profile, password, cfg, self._ended, outputs)
-                self.displays.session_started(cfg["screen"]["mode"])
                 self.connecting = None
+                self.secret = {"profileId": profile_id, "serverId": server["id"], "password": password}
+                if game:
+                    started = self.games.start(server["id"], source="login")
+                    if not started["ok"]:
+                        self.forget_secret()
+                    return {**started, "serverId": server["id"]}
+                self._open_session(server, profile, password)
                 return {"ok": True, "serverId": server["id"], "failover": server["id"] != server_id}
             self.connecting = None
             return {"ok": False, "error": "server"}
         finally:
             self.login_lock.release()
 
+    def _open_session(self, server, profile, password, single=False):
+        outputs = self.displays.status()["outputs"]
+        if not single:
+            self.displays.focus_main()  # a single-screen session opens on the main monitor
+        cfg = self.cfg.get()
+        self.session = rdp.Session(self.client, server, profile, password, cfg, self._ended, outputs, single=single)
+        if not single:
+            self.displays.session_started(cfg["screen"]["mode"])
+
+    def reconnect(self, single=False):
+        """Back into Windows with the password from memory (after game mode, or onto monitor 2 during it)."""
+        s = self.secret
+        server = self.cfg.server(s["serverId"]) if s else None
+        profile = self.cfg.profile(s["profileId"]) if s else None
+        if not (server and profile and self.client):
+            return False
+        self._open_session(server, profile, s["password"], single=single)
+        return True
+
+    def forget_secret(self):
+        self.secret = None
+
     def lock_session(self):
+        self.forget_secret()
+        self.games.stop()
         if self.session:
             self.session.stop("screen_off")
 
     def _ended(self, reason, detail):
         self.displays.session_ended()
-        self.last_end = {"reason": reason, "at": time.time(), "detail": detail if reason not in ("signed_out", "screen_off") else ""}
         self.session = None
+        if reason == "game":  # game mode took the session over; Dot brings it back afterwards
+            return
+        self.forget_secret()
+        self.last_end = {"reason": reason, "at": time.time(), "detail": detail if reason not in ("signed_out", "screen_off") else ""}
 
     def check_account(self, payload):
         """Setup helper: verify a user name / password pair against one server without connecting."""
@@ -235,6 +270,9 @@ def make_handler(dot: Dot, ui_dir: str):
                 return self.send_json({"timezones": system.timezones()})
             if url.path == "/api/info":
                 return self.send_json({**system.device_info(), "version": dot.state()["version"]})
+            if url.path == "/api/games/apps":
+                target = (q.get("target") or [""])[0]
+                return self.send_json({"apps": dot.games.apps(target, refresh="refresh" in q)})
             if url.path == "/api/audio":
                 return self.send_json({**dot.audio.refresh(), **dot.cfg.get()["audio"]})
             if url.path == "/api/monitor":
@@ -252,11 +290,20 @@ def make_handler(dot: Dot, ui_dir: str):
 
             # open to anyone at the device ------------------------------------
             if path == "/api/login":
-                return self.send_json(dot.login(data.get("profileId"), data.get("serverId"), data.get("password", "")))
+                return self.send_json(dot.login(data.get("profileId"), data.get("serverId"), data.get("password", ""),
+                                                game=bool(data.get("game"))))
+            if path == "/api/games/stop":
+                dot.games.stop(quit_app=bool(data.get("quit")))
+                return self.send_json({"ok": True})
             if path == "/api/power":
-                if dot.session is None:
+                if dot.session is None and dot.games.state == "idle":
+                    dot.forget_secret()
                     system.power(data.get("action"))
                 return self.send_json({"ok": dot.session is None})
+            if path == "/api/dev/game" and system.DEV:
+                # stands in for Game.exe dropping a command into \\tsclient\dot
+                dot.games.command(data)
+                return self.send_json({"ok": True})
             if path == "/api/volume":
                 if "sink" in data:
                     dot.audio.set_default_sink(data["sink"])
@@ -323,6 +370,13 @@ def make_handler(dot: Dot, ui_dir: str):
                     dot.cfg.mutate(lambda d: d.update(setupComplete=True))
                     dot.probe_now()
                     return self.send_json({"ok": True})
+                if path == "/api/games/hosts":
+                    return self.send_json({"ok": True, "host": dot.games.upsert_host(data)})
+                if path == "/api/games/hosts/delete":
+                    dot.games.delete_host(data.get("id"))
+                    return self.send_json({"ok": True})
+                if path == "/api/games/pair":
+                    return self.send_json({"ok": True, "pairing": dot.games.pair(data.get("target"))})
                 if path == "/api/monitor/set":
                     return self.send_json({"ok": dot.monitor.set_control(data.get("connector"), data.get("control"), data.get("value", 0))})
                 if path == "/api/displays":
