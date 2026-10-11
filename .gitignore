@@ -1,0 +1,11 @@
+# local dev state (config written by `python -m dotd --dev`)
+.dev/
+# editor / assistant settings
+.claude/
+.vscode/
+.idea/
+# python
+__pycache__/
+*.pyc
+# fonts are downloaded by the installer (Geist, SIL Open Font License)
+ui/fonts/*.woff2

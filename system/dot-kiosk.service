@@ -1,0 +1,28 @@
+# The screen: sway, locked down as a kiosk (see sway.config), on tty1 as the "dot" user.
+[Unit]
+Description=Dot kiosk screen
+After=systemd-user-sessions.service plymouth-quit-wait.service dotd.service dbus.socket systemd-logind.service getty@tty1.service
+Wants=dbus.socket systemd-logind.service dotd.service
+Conflicts=getty@tty1.service
+ConditionPathExists=/dev/tty1
+
+[Service]
+Type=simple
+User=dot
+PAMName=dot-kiosk
+EnvironmentFile=-/etc/dot/kiosk.env
+ExecStart=/usr/bin/sway --config /usr/lib/dot/system/sway.config
+Restart=always
+RestartSec=1
+UtmpIdentifier=tty1
+UtmpMode=user
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,10 @@
+// Boot splash: the same white circle the UI's boot screen starts with, so the hand-off is seamless.
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+
+dot = Image("dot.png");
+scale = Window.GetHeight() / 720;
+dot = dot.Scale(dot.GetWidth() * scale / 2, dot.GetHeight() * scale / 2);
+sprite = Sprite(dot);
+sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - dot.GetWidth() / 2);
+sprite.SetY(Window.GetY() + Window.GetHeight() / 2 - dot.GetHeight() / 2 - 72 * scale);

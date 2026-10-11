@@ -1,0 +1,428 @@
+// Building blocks shared by first-run setup and Settings: Wi-Fi, Tailscale, servers, people, preferences.
+
+import { $, $$, api, bind, html, icon, initial, latencyText, mount, notice, raw, refresh, store, toast, watch } from "./lib.js";
+
+export const ACCOUNT_ERRORS = {
+  wrong: ["key", "Wrong password", "Check the user name and password."],
+  expired: ["clock", "Password expired", "Change it on Windows first, then try again."],
+  locked: ["lock", "Account locked", "Too many tries. Ask your administrator or wait a while."],
+  disabled: ["ban", "Account disabled", "This Windows account is turned off."],
+  denied: ["shield", "Not allowed to sign in remotely", "Add this user to Remote Desktop Users on the server."],
+  cert: ["shield", "Server identity changed", "The server's certificate is different from last time."],
+  server: ["server", "Can't reach the server", "The network works. Check that the server is on."],
+  offline: ["wifiOff", "No internet", "Check the cable or choose a network."],
+  noclient: ["info", "FreeRDP is missing", "Run the installer again to add it."],
+  noserver: ["server", "No server set up", "Add a server in Settings."],
+  unknown: ["info", "Couldn't sign in", "Something unexpected happened. Try again."],
+};
+
+export function modal(markup, handlers = {}) {
+  const scrim = document.createElement("div");
+  scrim.className = "scrim";
+  mount(scrim, html`<div class="modal" role="dialog" aria-modal="true">${markup}</div>`);
+  document.getElementById("app").appendChild(scrim);
+  const close = () => scrim.remove();
+  bind(scrim, { close, ...Object.fromEntries(Object.entries(handlers).map(([k, fn]) => [k, (e, el) => fn(e, el, close)])) });
+  scrim.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  scrim.addEventListener("mousedown", (e) => { if (e.target === scrim) close(); });
+  setTimeout(() => ($("input", scrim) || $("button", scrim))?.focus(), 30);
+  return { el: scrim, close };
+}
+
+export function confirmModal(title, text, label, onYes) {
+  modal(html`<h2 class="title" style="font-size:22px">${title}</h2><p class="lead">${text}</p>
+    <div class="actions"><button class="btn btn-ghost" data-on-click="close">Cancel</button>
+    <button class="btn btn-accent" data-on-click="yes">${label}</button></div>`,
+  { yes: (e, el, close) => { close(); onYes(); } });
+}
+
+// switch / segmented helpers ------------------------------------------------------------------
+
+export const switchEl = (key, on, label) => html`<button class="switch" role="switch" aria-checked="${on ? "true" : "false"}" aria-label="${label}" data-key="${key}" data-on-click="toggle"></button>`;
+export const seg = (key, value, options) => html`<div class="seg" role="group">${options.map(([v, l]) => html`<button aria-pressed="${String(v) === String(value) ? "true" : "false"}" data-key="${key}" data-value="${v}" data-on-click="pick">${l}</button>`)}</div>`;
+
+// Wi-Fi ---------------------------------------------------------------------------------------------
+
+export function wifiPanel(root) {
+  let networks = [];
+  let open = null; // ssid with password row open
+  let busy = false;
+  let error = "";
+
+  const load = async (rescan) => {
+    const res = await api(`/api/wifi${rescan ? "?rescan=1" : ""}`);
+    networks = res.networks || [];
+    render();
+  };
+
+  function render() {
+    const net = store.state?.network || {};
+    const status = net.connected
+      ? notice(net.kind === "ethernet" ? "globe" : "wifi", net.kind === "ethernet" ? "Connected with a cable" : `Connected to ${net.name}`, [net.detail, net.ip].filter(Boolean).join(" · "), "", "ok")
+      : notice("wifiOff", "Not connected", "Plug in a network cable, or pick a Wi-Fi network below.");
+    mount(root, html`
+      <div class="stack">${status}</div>
+      <div class="row section-gap" style="justify-content:space-between;margin-bottom:8px">
+        <span class="label" style="margin:0 0 0 4px">Wi-Fi networks</span>
+        <button class="btn btn-ghost btn-sm" data-on-click="rescan">Scan again</button>
+      </div>
+      <div class="panel" style="padding:6px"><div class="list">
+        ${networks.length ? networks.map((w) => html`
+          <button class="item ${w.active ? "on" : ""}" data-ssid="${w.ssid}" data-secure="${w.secure ? 1 : 0}" data-on-click="choose">
+            ${icon(w.secure ? "lock" : "wifi", 16)}<div class="grow"><div class="t">${w.ssid}</div><div class="s">${w.secure ? "Secured" : "Open"}, ${w.signal > 70 ? "strong" : w.signal > 40 ? "good" : "weak"}</div></div>
+            <div class="meta">${w.active ? "Connected" : ""}</div>
+          </button>
+          ${open === w.ssid ? html`<form class="row" style="padding:6px 6px 10px" data-on-submit="join">
+            <label class="field grow" style="background:var(--raised)"><span class="sr">Password for ${w.ssid}</span>
+              <input type="password" name="pw" placeholder="Password" autocomplete="off"></label>
+            <button class="btn btn-primary" ${busy ? "disabled" : ""}>${busy ? raw('<span class="spinner dark"></span>') : "Join"}</button>
+          </form>${error ? html`<div class="small" style="padding:0 12px 10px;color:var(--accent)">${error}</div>` : ""}` : ""}`)
+        : html`<div class="small" style="padding:14px 12px">Looking for networks…</div>`}
+      </div></div>`);
+    bind(root, {
+      rescan: () => load(true),
+      choose: (e, el) => {
+        error = "";
+        if (el.dataset.secure === "1") { open = open === el.dataset.ssid ? null : el.dataset.ssid; render(); $("input", root)?.focus(); }
+        else join(el.dataset.ssid, "");
+      },
+      join: (e) => { e.preventDefault(); join(open, e.target.pw.value); },
+    });
+  }
+
+  async function join(ssid, password) {
+    busy = true; error = ""; render();
+    const res = await api("/api/wifi", { ssid, password });
+    busy = false;
+    if (res.ok) { open = null; toast(`Connected to ${ssid}`); await refresh(); load(); }
+    else { error = res.error || "Could not connect"; render(); }
+  }
+
+  render();
+  load();
+  return watch((st) => st.network, () => { if (document.activeElement?.tagName !== "INPUT" || !root.contains(document.activeElement)) render(); });
+}
+
+// Tailscale -------------------------------------------------------------------------------------------
+
+export function tailscalePanel(root) {
+  let starting = false;
+  function render() {
+    const ts = store.state?.tailscale || {};
+    let body;
+    if (!ts.installed) body = notice("info", "Tailscale isn't installed", "Run the installer with --tailscale to add it.");
+    else if (ts.running) body = html`${notice("checkCircle", "Connected to your tailnet", `This Dot is ${ts.ip || "online"}. Servers on your tailnet are reachable by name.`, "", "ok")}
+      <div style="margin-top:12px"><button class="btn btn-raised btn-sm" data-on-click="off">Turn off</button></div>`;
+    else if (ts.enabled && (ts.qr || ts.loginUrl)) body = html`<div class="row" style="align-items:flex-start;gap:20px">
+        ${ts.qr ? html`<div class="qr" aria-label="QR code to sign in to Tailscale">${ts.qr}</div>` : ""}
+        <div class="grow"><div style="font-size:15px;font-weight:600">Scan with your phone</div>
+        <p class="lead" style="font-size:14px">Or open this link on any device and sign in to approve this Dot:</p>
+        <div class="mono" style="font-size:13px;margin-top:8px;word-break:break-all">${ts.loginUrl}</div>
+        <div class="row small" style="margin-top:14px"><span class="spinner"></span> Waiting for approval</div></div></div>`;
+    else body = html`<button class="btn btn-raised" data-on-click="on" ${starting ? "disabled" : ""}>${starting ? raw('<span class="spinner"></span>') : ""} Connect with Tailscale</button>`;
+    mount(root, body);
+    bind(root, {
+      on: async () => { starting = true; render(); await api("/api/tailscale/up", {}); starting = false; refresh(); },
+      off: async () => { await api("/api/tailscale/down", {}); refresh(); },
+    });
+  }
+  render();
+  return watch((st) => st.tailscale, render);
+}
+
+// servers ------------------------------------------------------------------------------------------------
+
+export function serverList(root, { onEdit, compact = false } = {}) {
+  function render() {
+    const servers = store.state?.servers || [];
+    mount(root, servers.length ? html`<div class="card-list">${servers.map((s) => html`
+      <div class="card">
+        <span class="dotlat ${s.latency == null ? "down" : ""}"></span>
+        <div class="grow"><div class="t">${s.name}</div><div class="s">${s.host}${s.port !== 3389 ? `:${s.port}` : ""}${s.gateway ? ` via ${s.gateway}` : ""} · ${latencyText(s.latency)}</div></div>
+        <button class="icon-btn" aria-label="Edit ${s.name}" data-id="${s.id}" data-on-click="edit">${icon("pencil", 16)}</button>
+        ${compact ? "" : html`<button class="icon-btn" aria-label="Remove ${s.name}" data-id="${s.id}" data-on-click="del">${icon("trash", 16)}</button>`}
+      </div>`)}</div>` : html`<div class="small" style="padding:4px">No servers yet.</div>`);
+    bind(root, {
+      edit: (e, el) => onEdit?.(servers.find((s) => s.id === el.dataset.id)),
+      del: (e, el) => {
+        const s = servers.find((x) => x.id === el.dataset.id);
+        confirmModal(`Remove ${s.name}?`, "People who use it will no longer see it.", "Remove", async () => { await api("/api/servers/delete", { id: s.id }); refresh(); });
+      },
+    });
+  }
+  render();
+  return watch((st) => st.servers, render);
+}
+
+export function serverForm(root, server, { onDone, onCancel, submitLabel = "Save server" } = {}) {
+  const s = { name: "", host: "", port: 3389, domain: "", gateway: "", ...server };
+  let more = Boolean(s.domain || s.gateway || (s.port && s.port !== 3389));
+  let test = null; // null | "busy" | {ok, latency}
+
+  function render() {
+    mount(root, html`<form class="stack" data-on-submit="save" autocomplete="off">
+      <label><span class="label">Name</span><span class="field"><input name="name" value="${s.name}" placeholder="Office PC"></span></label>
+      <label><span class="label">Address</span><span class="field"><input name="host" value="${s.host}" placeholder="192.168.1.20 or office-pc" required data-on-input="dirty">
+        <button type="button" class="btn btn-raised btn-sm" data-on-click="test">${test === "busy" ? raw('<span class="spinner"></span>') : "Test"}</button></span></label>
+      ${test && test !== "busy" ? (test.ok ? notice("checkCircle", "Server answered", `${test.latency} ms. Remote Desktop is listening.`, "", "ok") : notice("server", "No answer", "Check the address, that the server is on, and that Remote Desktop is enabled.")) : ""}
+      ${more ? html`
+        <div class="row"><label class="grow"><span class="label">Port</span><span class="field"><input name="port" inputmode="numeric" value="${s.port}"></span></label>
+        <label class="grow"><span class="label">Domain (optional)</span><span class="field"><input name="domain" value="${s.domain}" placeholder="CONTOSO"></span></label></div>
+        <label><span class="label">RD Gateway (optional)</span><span class="field"><input name="gateway" value="${s.gateway}" placeholder="gateway.example.com"></span></label>`
+      : html`<div><button type="button" class="more" data-on-click="more">${icon("plus", 14)} Port, domain, gateway</button></div>`}
+      <div class="row" style="justify-content:flex-end;margin-top:8px">
+        ${onCancel ? html`<button type="button" class="btn btn-ghost" data-on-click="cancel">Cancel</button>` : ""}
+        <button class="btn btn-primary">${submitLabel}</button>
+      </div>
+    </form>`);
+    bind(root, {
+      dirty: () => { test = null; },
+      more: () => { read(); more = true; render(); },
+      cancel: () => onCancel?.(),
+      test: async () => {
+        read(); if (!s.host) return;
+        test = "busy"; render();
+        test = await api("/api/servers/test", { host: s.host, port: s.port });
+        render();
+      },
+      save: async (e) => {
+        e.preventDefault(); read();
+        const res = await api("/api/servers", s);
+        if (!res.ok) return toast(res.error || "Couldn't save");
+        await refresh();
+        onDone?.(res.server);
+      },
+    });
+  }
+  function read() {
+    const f = $("form", root);
+    for (const k of ["name", "host", "port", "domain", "gateway"]) if (f[k]) s[k] = k === "port" ? Number(f[k].value) || 3389 : f[k].value.trim();
+  }
+  render();
+  setTimeout(() => $("input", root)?.focus(), 30);
+}
+
+// people ----------------------------------------------------------------------------------------------------
+
+export function profileList(root, { onEdit } = {}) {
+  function render() {
+    const { profiles = [], servers = [] } = store.state || {};
+    const name = (id) => servers.find((s) => s.id === id)?.name || "no server";
+    mount(root, profiles.length ? html`<div class="card-list">${profiles.map((p) => html`
+      <div class="card">
+        <div class="avatar" style="width:40px;height:40px;font-size:17px;background:${p.color}">${initial(p.name)}</div>
+        <div class="grow"><div class="t">${p.name}</div><div class="s">${p.domain ? `${p.domain}\\` : ""}${p.username} · ${name(p.defaultServer)}${p.servers.length > 1 ? ` +${p.servers.length - 1}` : ""}</div></div>
+        <button class="icon-btn" aria-label="Edit ${p.name}" data-id="${p.id}" data-on-click="edit">${icon("pencil", 16)}</button>
+        <button class="icon-btn" aria-label="Remove ${p.name}" data-id="${p.id}" data-on-click="del">${icon("trash", 16)}</button>
+      </div>`)}</div>` : html`<div class="small" style="padding:4px">Nobody yet.</div>`);
+    bind(root, {
+      edit: (e, el) => onEdit?.(profiles.find((p) => p.id === el.dataset.id)),
+      del: (e, el) => {
+        const p = profiles.find((x) => x.id === el.dataset.id);
+        confirmModal(`Remove ${p.name}?`, "Their Windows account isn't touched; they just disappear from this Dot.", "Remove", async () => { await api("/api/profiles/delete", { id: p.id }); refresh(); });
+      },
+    });
+  }
+  render();
+  return watch((st) => [st.profiles, st.servers.map((s) => s.name)], render);
+}
+
+export function profileForm(root, profile, { onDone, onCancel, submitLabel = "Save" } = {}) {
+  const servers = store.state?.servers || [];
+  const p = { name: "", username: "", domain: "", servers: servers.map((s) => s.id), defaultServer: servers[0]?.id, ...profile };
+  let check = null; // null | "busy" | result string
+
+  function render() {
+    const domainHint = servers.find((s) => s.id === p.defaultServer)?.domain || "Optional";
+    mount(root, html`<form class="stack" data-on-submit="save" autocomplete="off">
+      <label><span class="label">Name on this Dot</span><span class="field"><input name="name" value="${p.name}" placeholder="Maxime"></span></label>
+      <div class="row">
+        <label class="grow"><span class="label">Windows user name</span><span class="field"><input name="username" value="${p.username}" placeholder="maxime" required autocapitalize="off" spellcheck="false"></span></label>
+        <label style="width:150px"><span class="label">Domain</span><span class="field"><input name="domain" value="${p.domain}" placeholder="${domainHint}" spellcheck="false"></span></label>
+      </div>
+      ${servers.length > 1 ? html`<div><span class="label">Servers this person can use</span><div class="panel" style="padding:6px"><div class="list">
+        ${servers.map((s) => html`<div class="item ${p.servers.includes(s.id) ? "on" : ""}">
+          <button type="button" class="switch" role="switch" aria-checked="${p.servers.includes(s.id)}" data-id="${s.id}" data-on-click="toggleServer"><span class="sr">Use ${s.name}</span></button>
+          <div class="grow"><div class="t">${s.name}</div><div class="s">${s.host}</div></div>
+          ${p.servers.includes(s.id) ? html`<button type="button" class="btn btn-sm ${p.defaultServer === s.id ? "btn-raised" : "btn-ghost"}" data-id="${s.id}" data-on-click="makeDefault" aria-pressed="${p.defaultServer === s.id}">${p.defaultServer === s.id ? "Default" : "Make default"}</button>` : ""}
+        </div>`)}
+      </div></div></div>` : ""}
+      <div><span class="label">Check the password (optional, never saved)</span>
+        <span class="field"><input name="pw" type="password" placeholder="Windows password">
+        <button type="button" class="btn btn-raised btn-sm" data-on-click="check">${check === "busy" ? raw('<span class="spinner"></span>') : "Check"}</button></span></div>
+      ${check && check !== "busy" ? (check === "ok" ? notice("checkCircle", "Password works", "Dot will ask for it at every sign in.", "", "ok") : notice(...(ACCOUNT_ERRORS[check] || ACCOUNT_ERRORS.unknown))) : ""}
+      <div class="row" style="justify-content:flex-end;margin-top:8px">
+        ${onCancel ? html`<button type="button" class="btn btn-ghost" data-on-click="cancel">Cancel</button>` : ""}
+        <button class="btn btn-primary">${submitLabel}</button>
+      </div>
+    </form>`);
+    bind(root, {
+      cancel: () => onCancel?.(),
+      toggleServer: (e, el) => {
+        read();
+        const id = el.dataset.id;
+        p.servers = p.servers.includes(id) ? p.servers.filter((x) => x !== id) : [...p.servers, id];
+        if (!p.servers.includes(p.defaultServer)) p.defaultServer = p.servers[0];
+        render();
+      },
+      makeDefault: (e, el) => { read(); p.defaultServer = el.dataset.id; render(); },
+      check: async () => {
+        read();
+        const pw = $("form", root).pw.value;
+        if (!p.username || !pw) return toast("Fill in the user name and password first");
+        check = "busy"; render();
+        const res = await api("/api/account/check", { serverId: p.defaultServer, username: p.username, domain: p.domain, password: pw });
+        check = res.result || "unknown"; render();
+      },
+      save: async (e) => {
+        e.preventDefault(); read();
+        const { pw, ...payload } = p; // eslint-disable-line no-unused-vars
+        const res = await api("/api/profiles", payload);
+        if (!res.ok) return toast(res.error || "Couldn't save");
+        await refresh();
+        onDone?.(res.profile);
+      },
+    });
+  }
+  function read() {
+    const f = $("form", root);
+    p.name = f.name.value.trim(); p.username = f.username.value.trim(); p.domain = f.domain.value.trim();
+  }
+  render();
+  setTimeout(() => $("input", root)?.focus(), 30);
+}
+
+// preferences ----------------------------------------------------------------------------------------------
+
+const KEYBOARDS = [["us", "English (US)"], ["gb", "English (UK)"], ["be", "Belgian"], ["fr", "French"], ["de", "German"], ["nl", "Dutch"], ["es", "Spanish"], ["it", "Italian"], ["pt", "Portuguese"], ["ch", "Swiss"], ["se", "Swedish"], ["no", "Norwegian"], ["dk", "Danish"], ["fi", "Finnish"], ["pl", "Polish"], ["jp", "Japanese"]];
+
+export function regionPanel(root) {
+  api("/api/timezones").then(({ timezones = [] }) => {
+    const d = store.state.device;
+    const zone = d.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    mount(root, html`<div class="stack">
+      <label><span class="label">Keyboard layout</span><span class="field">${icon("keyboard", 18)}<select name="keyboard" data-on-change="kb">
+        ${KEYBOARDS.map(([v, l]) => html`<option value="${v}" ${v === d.keyboard ? "selected" : ""}>${l}</option>`)}</select>${icon("chevDown", 16)}</span></label>
+      <label><span class="label">Time zone</span><span class="field">${icon("globe", 18)}<select name="timezone" data-on-change="tz">
+        ${timezones.map((t) => html`<option ${t === zone ? "selected" : ""}>${t}</option>`)}</select>${icon("chevDown", 16)}</span></label>
+      <div class="setting"><div class="grow"><div class="t">24-hour clock</div></div>${switchEl("use24h", d.use24h, "24-hour clock")}</div>
+      <p class="small" style="margin:4px">A new keyboard layout applies when Dot restarts its screen, which takes a second.</p>
+    </div>`);
+    bind(root, {
+      kb: (e) => save({ device: { keyboard: e.target.value } }),
+      tz: (e) => save({ device: { timezone: e.target.value } }),
+      toggle: (e, el) => { const on = el.getAttribute("aria-checked") !== "true"; el.setAttribute("aria-checked", on); save({ device: { use24h: on } }); },
+    });
+    if (!d.timezone) save({ device: { timezone: zone } });
+  });
+}
+
+export function preferencesPanel(root, { connection = true, device = true } = {}) {
+  function render() {
+    const { rdp, display, device: dv } = store.state;
+    mount(root, html`<div class="stack">
+      ${connection ? html`<span class="label" style="margin-bottom:-4px">Connection</span>
+      <div class="setting"><div class="grow"><div class="t">Picture quality</div><div class="s">Auto adapts to the network. Pick Slow for VPN or mobile data.</div></div>
+        ${seg("rdp.quality", rdp.quality, [["auto", "Auto"], ["lan", "Fast"], ["low", "Slow"]])}</div>
+      <div class="group">
+        <div class="setting"><div class="grow"><div class="t">Sound</div><div class="s">Play the server's audio through this Dot.</div></div>${switchEl("rdp.sound", rdp.sound, "Sound")}</div>
+        <div class="setting"><div class="grow"><div class="t">Microphone</div><div class="s">For calls on the server.</div></div>${switchEl("rdp.microphone", rdp.microphone, "Microphone")}</div>
+        <div class="setting"><div class="grow"><div class="t">Clipboard</div></div>${switchEl("rdp.clipboard", rdp.clipboard, "Clipboard")}</div>
+        <div class="setting"><div class="grow"><div class="t">USB drives</div><div class="s">Sticks plugged into the Pi show up on the server.</div></div>${switchEl("rdp.usbDrives", rdp.usbDrives, "USB drives")}</div>
+      </div>` : ""}
+      ${device ? html`<span class="label ${connection ? "section-gap" : ""}" style="margin-bottom:-4px">This Dot</span>
+      <div class="setting"><div class="grow"><div class="t">Show the clock after</div><div class="s">When nobody signs in for a while.</div></div>
+        ${seg("device.idleMinutes", dv.idleMinutes, [[0, "Never"], [2, "2 min"], [5, "5 min"], [15, "15 min"]])}</div>
+      <div class="setting"><div class="grow"><div class="t">Interface size</div></div>
+        ${seg("display.scale", display.scale, [[0.9, "Small"], [1, "Normal"], [1.25, "Large"], [1.5, "Larger"]])}</div>
+      <div class="setting"><div class="grow"><div class="t">Detailed start-up</div><div class="s">Show every start-up step as text.</div></div>${switchEl("device.verboseBoot", dv.verboseBoot, "Detailed start-up")}</div>` : ""}
+    </div>`);
+    bind(root, {
+      toggle: (e, el) => { const on = el.getAttribute("aria-checked") !== "true"; el.setAttribute("aria-checked", on); save(path(el.dataset.key, on)); },
+      pick: (e, el) => {
+        $$(`[data-key="${el.dataset.key}"]`, root).forEach((b) => b.setAttribute("aria-pressed", b === el));
+        const v = el.dataset.value;
+        save(path(el.dataset.key, isNaN(Number(v)) ? v : Number(v)));
+      },
+    });
+  }
+  const path = (key, value) => { const [a, b] = key.split("."); return { [a]: { [b]: value } }; };
+  render();
+}
+
+export function pinPanel(root) {
+  function render() {
+    const has = store.state.device.hasPin;
+    mount(root, html`<div class="setting"><div class="grow"><div class="t">Settings PIN</div><div class="s">${has ? "Settings are locked with a PIN." : "Anyone at this Dot can open Settings. Add a PIN to lock them."}</div></div>
+      <button class="btn btn-raised btn-sm" data-on-click="set">${has ? "Change" : "Add PIN"}</button>
+      ${has ? html`<button class="btn btn-ghost btn-sm" data-on-click="clear">Remove</button>` : ""}</div>`);
+    bind(root, {
+      set: () => modal(html`<h2 class="title" style="font-size:22px">Settings PIN</h2><p class="lead">4 to 8 digits. You'll need it to change servers, people or settings.</p>
+        <form data-on-submit="save" style="margin-top:20px"><label class="field"><span class="sr">New PIN</span><input name="pin" type="password" inputmode="numeric" maxlength="8" placeholder="New PIN"></label>
+        <div class="actions"><button type="button" class="btn btn-ghost" data-on-click="close">Cancel</button><button class="btn btn-primary">Save PIN</button></div></form>`,
+      { save: async (e, el, close) => {
+        e.preventDefault();
+        const pin = e.target.pin.value;
+        if (!/^\d{4,8}$/.test(pin)) return toast("Use 4 to 8 digits");
+        await api("/api/pin", { pin }); close(); await refresh(); render(); toast("PIN saved");
+      } }),
+      clear: async () => { await api("/api/pin", { pin: null }); await refresh(); render(); },
+    });
+  }
+  render();
+}
+
+export async function save(patch) {
+  await api("/api/settings", patch);
+  await refresh();
+}
+
+// sound: one volume (the monitor's speakers or this Dot), the output, and Windows' volume ----------------------
+
+export const volumeIcon = (a) => (!a || a.muted || a.volume === 0 ? "volumeX" : a.volume < 50 ? "volumeLow" : "volume");
+
+let volumeTimer;
+export function setVolume(patch) {
+  clearTimeout(volumeTimer); // slider drags: DDC is slow, send the last value
+  volumeTimer = setTimeout(async () => { await api("/api/volume", patch); refresh(); }, patch.volume !== undefined ? 150 : 0);
+}
+
+export function soundPanel(root, { compact = false } = {}) {
+  let audio = null;
+  const load = async () => { audio = await api("/api/audio"); render(); };
+
+  function render() {
+    if (!audio) return mount(root, html`<div class="small">Loading…</div>`);
+    const where = audio.using === "monitor" ? "the monitor's speakers" : "this Dot";
+    mount(root, html`<div class="stack">
+      <div class="setting" style="${compact ? "background:transparent;padding:4px 4px 8px" : ""}">
+        <button class="icon-btn" aria-label="${audio.muted ? "Unmute" : "Mute"}" data-on-click="mute">${icon(volumeIcon(audio), 18)}</button>
+        <input class="range grow" type="range" min="0" max="100" value="${audio.volume ?? 0}" data-on-input="slide" aria-label="Volume">
+        <div class="small mono" style="width:32px;text-align:right" id="vol">${audio.volume ?? "–"}</div>
+      </div>
+      ${compact ? html`<div class="small" style="margin:-4px 8px 6px">Sets ${where}${audio.followWindows ? ". Windows' volume moves it too." : "."}</div>` : ""}
+      <div>${compact ? "" : html`<span class="label">Output</span>`}<div class="${compact ? "" : "panel"}" style="padding:${compact ? 0 : 6}px"><div class="list">
+        ${audio.sinks.map((k) => html`<button class="item ${k.name === audio.sink ? "on" : ""}" role="menuitemradio" aria-checked="${k.name === audio.sink}" data-name="${k.name}" data-on-click="sink">
+          ${icon(/speakers|monitor/i.test(k.label) ? "monitor" : "volume", 16)}<div class="grow"><div class="t">${k.label}</div></div>
+          <div class="meta">${k.name === audio.sink ? icon("check", 16) : ""}</div></button>`)}
+      </div></div></div>
+      ${compact ? "" : html`
+      <span class="label section-gap" style="margin-bottom:-4px">Windows</span>
+      <div class="setting"><div class="grow"><div class="t">Follow Windows' volume</div><div class="s">Windows sends its volume over Remote Desktop. Dot turns the real speakers up and down to match, so Windows' slider and its volume keys control your speakers. Nothing to install on Windows.</div></div>
+        ${switchEl("audio.followWindows", audio.followWindows, "Follow Windows' volume")}</div>
+      <div class="setting"><div class="grow"><div class="t">Volume lives on</div><div class="s">${{ auto: "The monitor's speakers when sound plays through a monitor that allows it, otherwise this Dot.", monitor: "The monitor's own volume, over its HDMI cable.", pi: "This Dot's output. Use this for headphones or USB speakers." }[audio.target]}</div></div>
+        ${seg("audio.target", audio.target, [["auto", "Auto"], ["monitor", "Monitor"], ["pi", "This Dot"]])}</div>
+      ${audio.windows != null ? html`<p class="small" style="margin:0 4px">Windows last set the volume to ${audio.windows}%.</p>` : ""}`}
+    </div>`);
+    bind(root, {
+      slide: (e) => { $("#vol", root).textContent = e.target.value; audio.volume = Number(e.target.value); setVolume({ volume: audio.volume, muted: false }); },
+      mute: () => { audio.muted = !audio.muted; setVolume({ muted: audio.muted }); render(); },
+      sink: async (e, el) => { audio = { ...audio, ...(await api("/api/volume", { sink: el.dataset.name })) }; render(); refresh(); },
+      toggle: (e, el) => { const on = el.getAttribute("aria-checked") !== "true"; save({ audio: { followWindows: on } }).then(load); },
+      pick: (e, el) => save({ audio: { target: el.dataset.value } }).then(load),
+    });
+  }
+  render();
+  load();
+  return watch((st) => [st.audio?.volume, st.audio?.muted, st.audio?.sink], () => { if (document.activeElement?.type !== "range") load(); });
+}

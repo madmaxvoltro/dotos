@@ -1,0 +1,14 @@
+[Unit]
+Description=Dot device daemon
+After=network.target NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+WorkingDirectory=/usr/lib/dot
+ExecStart=/usr/bin/python3 -m dotd --config /etc/dot/config.json --ui /usr/lib/dot/ui
+Environment=PYTHONUNBUFFERED=1 DOT_USER=dot
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
