@@ -14,7 +14,7 @@ import { idle } from "/js/screens.js";
 
 const app = document.getElementById("app");
 function layout() {
-  const s = Math.min(innerWidth / 1280, innerHeight / 720);
+  const s = Math.min(1, innerWidth / 1280, innerHeight / 720);
   app.style.width = `${innerWidth / s}px`;
   app.style.height = `${innerHeight / s}px`;
   app.style.transform = `scale(${s})`;

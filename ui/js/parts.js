@@ -165,6 +165,15 @@ export function serverForm(root, server, { onDone, onCancel, submitLabel = "Save
   const s = { name: "", host: "", port: 3389, domain: "", gateway: "", ...server };
   let more = Boolean(s.domain || s.gateway || (s.port && s.port !== 3389));
   let test = null; // null | "busy" | {ok, latency}
+  // who signs in here, and as whom: the same data as each person's "Different account"
+  const people = (store.state?.profiles || []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    fallback: `${p.domain ? `${p.domain}\\` : ""}${p.username}`,
+    on: s.id ? p.servers.includes(s.id) : true,
+    username: (s.id && p.accounts?.[s.id]?.username) || "",
+    domain: (s.id && p.accounts?.[s.id]?.domain) || "",
+  }));
 
   function render() {
     mount(root, html`<form class="stack" data-on-submit="save" autocomplete="off">
@@ -177,6 +186,16 @@ export function serverForm(root, server, { onDone, onCancel, submitLabel = "Save
         <label class="grow"><span class="label">Domain (optional)</span><span class="field"><input name="domain" value="${s.domain}" placeholder="CONTOSO"></span></label></div>
         <label><span class="label">RD Gateway (optional)</span><span class="field"><input name="gateway" value="${s.gateway}" placeholder="gateway.example.com"></span></label>`
       : html`<div><button type="button" class="more" data-on-click="more">${icon("plus", 14)} Port, domain, gateway</button></div>`}
+      ${people.length ? html`<div><span class="label">Who signs in here</span><div class="panel" style="padding:6px"><div class="list">
+        ${people.map((p) => html`<div class="item ${p.on ? "on" : ""}" style="flex-wrap:wrap">
+          <button type="button" class="switch" role="switch" aria-checked="${p.on}" data-id="${p.id}" data-on-click="who"><span class="sr">${p.name} uses this server</span></button>
+          <div class="grow"><div class="t">${p.name}</div><div class="s">${p.on ? (p.username ? "Own account on this server" : `Signs in as ${p.fallback}`) : "Doesn't use this server"}</div></div>
+          ${p.on ? html`<div class="row" style="width:100%;padding:8px 0 4px 58px">
+            <label class="grow"><span class="sr">${p.name}'s user name on this server</span><span class="field" style="height:40px;background:var(--raised)"><input name="who-user-${p.id}" value="${p.username}" placeholder="${p.fallback}" autocapitalize="off" spellcheck="false"></span></label>
+            <label style="width:130px"><span class="sr">${p.name}'s domain on this server</span><span class="field" style="height:40px;background:var(--raised)"><input name="who-domain-${p.id}" value="${p.domain}" placeholder="${s.domain || "Domain"}" spellcheck="false"></span></label>
+          </div>` : ""}
+        </div>`)}
+      </div></div><p class="small" style="margin:6px 4px 0">Leave a user name empty to use that person's usual one.</p></div>` : ""}
       <div class="row" style="justify-content:flex-end;margin-top:8px">
         ${onCancel ? html`<button type="button" class="btn btn-ghost" data-on-click="cancel">Cancel</button>` : ""}
         <button class="btn btn-primary">${submitLabel}</button>
@@ -184,6 +203,7 @@ export function serverForm(root, server, { onDone, onCancel, submitLabel = "Save
     </form>`);
     bind(root, {
       dirty: () => { test = null; },
+      who: (e, el) => { read(); const p = people.find((x) => x.id === el.dataset.id); p.on = !p.on; render(); },
       more: () => { read(); more = true; render(); },
       cancel: () => onCancel?.(),
       test: async () => {
@@ -197,6 +217,7 @@ export function serverForm(root, server, { onDone, onCancel, submitLabel = "Save
         const res = await api("/api/servers", s);
         if (!res.ok) return toast(res.error || "Couldn't save");
         await refresh();
+        await savePeople(res.server.id);
         onDone?.(res.server);
       },
     });
@@ -204,6 +225,25 @@ export function serverForm(root, server, { onDone, onCancel, submitLabel = "Save
   function read() {
     const f = $("form", root);
     for (const k of ["name", "host", "port", "domain", "gateway"]) if (f[k]) s[k] = k === "port" ? Number(f[k].value) || 3389 : f[k].value.trim();
+    for (const p of people) {
+      if (f[`who-user-${p.id}`]) p.username = f[`who-user-${p.id}`].value.trim();
+      if (f[`who-domain-${p.id}`]) p.domain = f[`who-domain-${p.id}`].value.trim();
+    }
+  }
+
+  /** Write "who signs in here" back to each person whose access or account changed. */
+  async function savePeople(serverId) {
+    for (const who of people) {
+      const p = store.state.profiles.find((x) => x.id === who.id);
+      if (!p) continue;
+      const servers = who.on ? [...new Set([...p.servers, serverId])] : p.servers.filter((x) => x !== serverId);
+      const accounts = { ...(p.accounts || {}) };
+      if (who.on && who.username) accounts[serverId] = { username: who.username, domain: who.domain };
+      else delete accounts[serverId];
+      const same = JSON.stringify(servers) === JSON.stringify(p.servers) && JSON.stringify(accounts) === JSON.stringify(p.accounts || {});
+      if (!same) await api("/api/profiles", { ...p, servers, accounts });
+    }
+    await refresh();
   }
   render();
   setTimeout(() => $("input", root)?.focus(), 30);

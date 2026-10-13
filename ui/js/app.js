@@ -24,10 +24,11 @@ function go(name, opts = {}) {
   resetIdle();
 }
 
-// scale the 1280×720 design to the real screen, times the user's size preference
+// the design is laid out for 1280×720 and up: shrink on smaller screens, never blow it up
+// (a 1080p screen just has more room; 4K is handled by the monitor's scale). Settings > This Dot > Interface size.
 function layout() {
   const user = Number(store.state?.display?.scale) || 1;
-  const fit = Math.min(innerWidth / 1280, innerHeight / 720);
+  const fit = Math.min(1, innerWidth / 1280, innerHeight / 720);
   const s = fit * user;
   app.style.width = `${innerWidth / s}px`;
   app.style.height = `${innerHeight / s}px`;
