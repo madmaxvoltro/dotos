@@ -382,6 +382,9 @@ def make_handler(dot: Dot, ui_dir: str):
                     return self.send_json({"ok": True, "pairing": dot.games.pair(data.get("target"))})
                 if path == "/api/monitor/set":
                     return self.send_json({"ok": dot.monitor.set_control(data.get("connector"), data.get("control"), data.get("value", 0))})
+                if path == "/api/displays/keep":
+                    dot.displays.keep()
+                    return self.send_json({"ok": True})
                 if path == "/api/displays":
                     dot.displays.save_layout(data)
                     return self.send_json({"ok": True, **dot.displays.status()})

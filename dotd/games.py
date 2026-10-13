@@ -314,7 +314,7 @@ class Games:
                 if fastest and fastest != main["mode"]:
                     self.restore_mode = (main["name"], main["mode"])
                     self.dot.displays.set_mode(main["name"], fastest)
-                mode = (fastest or main["mode"] or "1920x1080@60Hz")
+                mode = (fastest or main["mode"] or "1920x1080@60Hz").split(":", 1)[-1]
                 res, _, hz = mode.partition("@")
                 width, height = (int(v) for v in res.split("x"))
                 fps = round(float(hz.rstrip("Hz") or 60))

@@ -91,6 +91,29 @@ def mode_str(m):
     return f"{m['width']}x{m['height']}@{m['refresh'] / 1000:.3f}Hz"
 
 
+# Offered when a monitor doesn't tell the Pi its resolutions (no EDID: monitor off at boot, adapters,
+# KVM switches). Linux then only lists safe modes up to 1024x768; sway can drive these anyway.
+CUSTOM_MODES = [(3840, 2160, 60), (3840, 2160, 30), (2560, 1440, 144), (2560, 1440, 60), (2560, 1080, 60),
+                (1920, 1200, 60), (1920, 1080, 144), (1920, 1080, 120), (1920, 1080, 60), (1680, 1050, 60),
+                (1600, 900, 60), (1440, 900, 60), (1366, 768, 60), (1280, 1024, 60), (1280, 720, 60)]
+
+
+def edid_present(connector):
+    if DEV:
+        return connector != "HDMI-A-3"
+    for path in glob.glob(f"/sys/class/drm/card*-{connector}/edid"):
+        try:
+            return os.path.getsize(path) >= 128
+        except OSError:
+            pass
+    return False
+
+
+def plain_mode(mode):
+    """'custom:1920x1080@60.000Hz' -> '1920x1080@60.000Hz'."""
+    return (mode or "").split(":", 1)[-1]
+
+
 class Displays:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -98,6 +121,7 @@ class Displays:
         self.lock = threading.RLock()
         self._last_shape = None
         self._dev_outputs = [dict(o) for o in DEV_OUTPUTS]
+        self.trial = None  # {"until", "previous": screen config}: a custom mode waiting to be kept
         threading.Thread(target=self._watch, daemon=True).start()
 
     # reading ------------------------------------------------------------------------------------
@@ -114,6 +138,19 @@ class Displays:
             cm = o.get("current_mode") or {}
             modes = sorted({mode_str(m): m for m in o.get("modes", [])}.values(), key=lambda m: (-m["width"] * m["height"], -m["refresh"]))
             mm = physical_size(o["name"])
+            choices = [{"value": mode_str(m), "label": f"{m['width']} × {m['height']} · {round(m['refresh'] / 1000)} Hz"} for m in modes]
+            edid = edid_present(o["name"])
+            biggest = max((m["width"] * m["height"] for m in modes), default=0)
+            needs_custom = not edid or biggest <= 1024 * 768
+            if needs_custom:
+                known = {(m["width"], m["height"], round(m["refresh"] / 1000)) for m in modes}
+                choices += [{"value": f"custom:{w}x{h}@{r:.3f}Hz", "label": f"{w} × {h} · {r} Hz (custom)"}
+                            for w, h, r in CUSTOM_MODES if (w, h, r) not in known]
+            current = mode_str(cm) if cm else None
+            if current and current not in [c["value"] for c in choices]:
+                # a custom mode is running: match it by resolution (sway's timings round the refresh rate)
+                same = [c["value"] for c in choices if plain_mode(c["value"]).split("@")[0] == current.split("@")[0]]
+                current = same[0] if same else current
             px_w, px_h = (cm.get("width") or o["rect"]["width"]), (cm.get("height") or o["rect"]["height"])
             if o.get("transform", "normal") in ("90", "270"):
                 px_w, px_h = px_h, px_w
@@ -131,8 +168,10 @@ class Displays:
                 "x": o["rect"]["x"], "y": o["rect"]["y"],
                 "width": o["rect"]["width"], "height": o["rect"]["height"],
                 "transform": o.get("transform", "normal"),
-                "mode": mode_str(cm) if cm else None,
-                "modes": [{"value": mode_str(m), "label": f"{m['width']} × {m['height']} · {round(m['refresh'] / 1000)} Hz"} for m in modes],
+                "mode": current,
+                "modes": choices,
+                "edid": edid,
+                "customModes": needs_custom,
             })
         return outs
 
@@ -145,7 +184,8 @@ class Displays:
     def status(self):
         main = self.main()
         outs = [{**o, "main": bool(main) and o["name"] == main["name"]} for o in self.outputs]
-        return {"outputs": outs, "main": main["name"] if main else None}
+        trial = {"secondsLeft": max(0, round(self.trial["until"] - time.time()))} if self.trial else None
+        return {"outputs": outs, "main": main["name"] if main else None, "trial": trial}
 
     # applying -------------------------------------------------------------------------------------
 
@@ -169,6 +209,7 @@ class Displays:
         def size(o):
             p = placed[o["id"]]
             mode = p.get("mode") or o["mode"] or ""
+            mode = plain_mode(mode)
             w, h = (int(v) for v in mode.split("@")[0].split("x")) if "x" in mode else (o["pxWidth"], o["pxHeight"])
             if p.get("transform", "normal") in ("90", "270"):
                 w, h = h, w
@@ -198,7 +239,10 @@ class Displays:
                 p = placed[o["id"]]
                 parts = [f'output "{o["id"]}" enable']
                 if p.get("mode"):
-                    parts.append(f"mode {p['mode']}")
+                    if p["mode"].startswith("custom:"):
+                        parts.append(f"mode --custom {plain_mode(p['mode'])}")
+                    else:
+                        parts.append(f"mode {p['mode']}")
                 scale = o["autoScale"] if p.get("scale", "auto") == "auto" else float(p["scale"])
                 parts.append(f"pos {int(p['x'])} {int(p['y'])} transform {p.get('transform', 'normal')} scale {scale:g}")
                 lines.append(" ".join(parts))
@@ -220,7 +264,7 @@ class Displays:
             p = placed.get(identifier(o))
             if not p:
                 continue
-            mode = next((m for m in o["modes"] if mode_str(m) == p.get("mode")), o["current_mode"])
+            mode = next((m for m in o["modes"] if mode_str(m) == plain_mode(p.get("mode"))), o["current_mode"])
             w, h = mode["width"], mode["height"]
             mm = physical_size(o["name"])
             if p.get("transform") in ("90", "270"):
@@ -269,6 +313,8 @@ class Displays:
         o = next((x for x in self.outputs if x["name"] == name), None)
         if not o or not o["mode"]:
             return None
+        if o["mode"].startswith("custom:"):
+            return None  # a monitor without EDID: don't guess at faster modes for game mode
         res = o["mode"].split("@")[0]
         same = [m["value"] for m in o["modes"] if m["value"].startswith(res + "@")]
         return max(same, key=lambda v: float(v.split("@")[1].rstrip("Hz")), default=o["mode"])
@@ -328,8 +374,34 @@ class Displays:
             if payload.get("main") in known:
                 d["screen"]["main"] = payload["main"]
 
+        previous = self.cfg.get()["screen"]
+        # a custom mode the monitor never advertised might not show a picture: try it, and go back
+        # by itself unless someone presses Keep (dotd does this, so it works on a black screen too)
+        risky = any((p.get("mode") or "").startswith("custom:") and p.get("mode") != (previous["layout"].get(oid) or {}).get("mode")
+                    for oid, p in layout.items())
         self.cfg.mutate(fn)
         self.apply()
+        if risky:
+            self.trial = {"until": time.time() + 15, "previous": {"layout": previous["layout"], "main": previous["main"]}}
+            timer = threading.Timer(15.5, self._end_trial, args=(self.trial,))
+            timer.daemon = True
+            timer.start()
+
+    def keep(self):
+        self.trial = None
+
+    def _end_trial(self, trial):
+        if self.trial is not trial:
+            return  # kept, or replaced by a newer try
+        self.trial = None
+
+        def fn(d):
+            d["screen"]["layout"] = trial["previous"]["layout"]
+            d["screen"]["main"] = trial["previous"]["main"]
+
+        self.cfg.mutate(fn)
+        self.apply()
+        print("displays: custom mode not kept, switched back", flush=True)
 
     # watching ---------------------------------------------------------------------------------------
 

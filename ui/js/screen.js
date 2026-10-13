@@ -2,7 +2,7 @@
 // and what happens when the main monitor turns off.
 
 import { $, $$, api, bind, html, icon, mount, refresh, store, toast, watch } from "./lib.js";
-import { save, seg, switchEl } from "./parts.js";
+import { modal, save, seg, switchEl } from "./parts.js";
 
 const BOX = { w: 560, h: 220, pad: 16 };
 const MIN_SCALE = 0.5;
@@ -36,7 +36,7 @@ export function screenPanel(root) {
 
   /** Pixels the monitor shows in its current mode and rotation. */
   const pixels = (o) => {
-    const m = /^(\d+)x(\d+)/.exec(o.mode || "");
+    const m = /(\d+)x(\d+)/.exec(o.mode || "");
     let w = m ? Number(m[1]) : o.pxWidth, h = m ? Number(m[2]) : o.pxHeight;
     if (o.transform === "90" || o.transform === "270") [w, h] = [h, w];
     return { w, h };
@@ -181,6 +181,8 @@ export function screenPanel(root) {
         <div class="t">${o.label} <span class="small" style="font-weight:400">· ${o.name}</span></div>
         <div class="s">${!info ? "Asking the monitor…" : channels.length ? `Controlled over ${channels.join(" and ")}` : "No DDC/CI. Turn it on in the monitor's own menu to control brightness from Dot."}</div></div>
         ${o.id === mainId ? html`<span class="small">Main monitor</span>` : html`<button class="btn btn-raised btn-sm" data-on-click="makeMain">Make main</button>`}</div>
+      ${o.customModes ? html`<div class="notice">${icon("info", 22)}<div class="grow"><div class="t">This monitor didn't share its resolutions</div>
+        <div class="s">The Pi couldn't read its EDID, so it only offers safe modes. Pick the monitor's real resolution: the ones marked custom are applied anyway. If the picture goes black, it switches back after 15 seconds.</div></div></div>` : ""}
       <div class="group">
         <div class="setting"><div class="grow"><div class="t">Resolution</div></div>
           <label class="field" style="height:36px;background:var(--raised);min-width:230px"><span class="sr">Resolution of ${o.label}</span>
@@ -336,7 +338,24 @@ export function screenPanel(root) {
     await refresh();
     loadArrangement();
     render();
+    if (res.trial) return confirmKeep();
     toast("Arrangement applied. Windows gets it at the next sign in.");
+  }
+
+  /** A custom mode is on trial: keep it, or let dotd switch back by itself. */
+  function confirmKeep() {
+    const m = modal(html`<h2 class="title" style="font-size:22px">Keep this resolution?</h2>
+      <p class="lead" id="keepline"></p>
+      <div class="actions"><button class="btn btn-ghost" data-on-click="close">Switch back</button><button class="btn btn-primary" data-on-click="keep">Keep</button></div>`,
+    { keep: async (e, el, close) => { clearInterval(t); await api("/api/displays/keep", {}); close(); toast("Resolution kept"); } });
+    const tick = () => {
+      const left = store.state.displays.trial?.secondsLeft;
+      if (left == null || !document.body.contains(m.el)) { clearInterval(t); m.close(); return; }
+      $("#keepline", m.el).textContent = `Switching back in ${left} s.`;
+    };
+    // "Switch back" (or Escape) just waits for dotd's own timer, then refreshes
+    const t = setInterval(() => { refresh().then(tick); }, 1000);
+    tick();
   }
 
   const patchFor = (key, value) => { const [a, b] = key.split("."); return { [a]: { [b]: value } }; };
