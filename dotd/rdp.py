@@ -129,12 +129,9 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
     if auth_only:
         args.append("/auth-only" if v3 else "+auth-only")
         return args
-    # GFX (the H.264 graphics pipeline) is fast but some Windows / client combinations show only black;
-    # "compatible" uses the older bitmap updates instead
-    compatible = rdp.get("graphics") == "compatible"
     # auto ("Smooth", also the old "light"): one H.264 stream (AVC420), the lightest for a Pi to decode;
-    # sharp: RemoteFX/progressive, crisp text; compatible: no graphics pipeline. AVC444 (plain /gfx) is gone:
-    # two streams are too heavy for a Pi 4 and it drew only a small square in the corner.
+    # sharp: RemoteFX/progressive, crisp text; compatible: no graphics pipeline, for when Windows stays black.
+    # AVC444 (plain /gfx) is left out: two streams are too heavy for a Pi 4.
     gfx = {"compatible": "-gfx", "sharp": "/gfx:RFX"}.get(rdp.get("graphics"), "/gfx:AVC420")
     args += ["/f", gfx, "/title:Dot Session"]
     if "xfreerdp" in os.path.basename(client["bin"]):
@@ -155,8 +152,9 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
     active = [o for o in outputs if o.get("active")]
     if not single and screen.get("mode", "extend") == "extend" and len(active) > 1:
         args.append("/multimon")  # sends Windows each monitor's size, position and which one is primary
-    elif not compatible:
-        args.append("/dynamic-resolution")  # follows resolution changes; FreeRDP pairs it badly with /multimon
+    # No /dynamic-resolution: with it, FreeRDP tells Windows the window's size every time sway resizes it,
+    # and a size caught while sway was still placing the window left Windows drawing (and taking clicks)
+    # in a small square in the top-left corner. /f alone uses the monitor's full size from the start.
     scale = windows_scale(screen, active)
     if scale != 100:
         args.append(f"/scale-desktop:{scale}")
