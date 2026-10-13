@@ -9,7 +9,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import audio, displays, games, monitor, rdp, system
+from . import audio, bluetooth, displays, games, monitor, rdp, system
 from .config import Config
 
 def _version():
@@ -46,6 +46,7 @@ class Dot:
         self.monitor = monitor.Monitor(cfg, self.lock_session, lambda: (self.displays.main() or {}).get("name"))
         self.audio = audio.Audio(cfg, self.monitor)
         self.games = games.Games(self)
+        self.bluetooth = bluetooth.Bluetooth()
         threading.Thread(target=self._watch, daemon=True).start()
 
     def _watch(self):
@@ -108,6 +109,7 @@ class Dot:
             "displays": self.displays.status(),
             "audio": {**self.audio.status(), **cfg["audio"]},
             "features": cfg["features"],
+            "bluetooth": self.bluetooth.status(),
             "games": {**self.games.status(), **{k: v for k, v in cfg["games"].items() if k != "hosts"}},
             "client": {"name": os.path.basename(self.client["bin"]), "major": self.client["major"]} if self.client else None,
             "session": session,
@@ -372,6 +374,25 @@ def make_handler(dot: Dot, ui_dir: str):
                 if path == "/api/setup/complete":
                     dot.cfg.mutate(lambda d: d.update(setupComplete=True))
                     dot.probe_now()
+                    return self.send_json({"ok": True})
+                if path == "/api/bluetooth/power":
+                    dot.bluetooth.set_power(bool(data.get("on")))
+                    return self.send_json({"ok": True})
+                if path == "/api/bluetooth/scan":
+                    (dot.bluetooth.start_scan if data.get("on") else dot.bluetooth.stop_scan)()
+                    return self.send_json({"ok": True})
+                if path == "/api/bluetooth/pair":
+                    dot.bluetooth.pair(str(data.get("mac", ""))[:17])
+                    return self.send_json({"ok": True})
+                if path == "/api/bluetooth/answer":
+                    dot.bluetooth.answer(bool(data.get("yes")))
+                    return self.send_json({"ok": True})
+                if path == "/api/bluetooth/connect":
+                    threading.Thread(target=dot.bluetooth.connect, args=(str(data.get("mac", ""))[:17], bool(data.get("on"))),
+                                     daemon=True).start()
+                    return self.send_json({"ok": True})
+                if path == "/api/bluetooth/forget":
+                    dot.bluetooth.forget(str(data.get("mac", ""))[:17])
                     return self.send_json({"ok": True})
                 if path == "/api/games/hosts":
                     return self.send_json({"ok": True, "host": dot.games.upsert_host(data)})

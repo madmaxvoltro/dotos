@@ -1,6 +1,7 @@
 // Settings: people, servers, network, remote access, connection, this Dot, about.
 
 import { $, api, bind, html, icon, mount, refresh, setAdminToken, store, toast } from "./lib.js";
+import { bluetoothPanel } from "./bluetooth.js";
 import { gamesPanel } from "./games.js";
 import { screenPanel } from "./screen.js";
 import { confirmModal, pinPanel, preferencesPanel, profileForm, profileList, regionPanel, serverForm, serverList, soundPanel, tailscalePanel, wifiPanel } from "./parts.js";
@@ -9,6 +10,7 @@ const SECTIONS = [
   ["people", "People", "users"],
   ["servers", "Servers", "server"],
   ["network", "Network", "wifi"],
+  ["bluetooth", "Bluetooth", "bluetooth"],
   ["remote", "Remote access", "globe"],
   ["connection", "Connection", "sliders"],
   ["screen", "Screen", "monitor"],
@@ -91,6 +93,11 @@ export function settings(root, { go, token }) {
     if (section === "sound") {
       title("Sound", "One volume for everything: Dot's slider, Windows' slider and the volume keys all move it.");
       cleanup = soundPanel(body);
+    }
+
+    if (section === "bluetooth") {
+      title("Bluetooth", "Keyboards, mice, headphones and game controllers.");
+      cleanup = bluetoothPanel(body);
     }
 
     if (section === "games") {

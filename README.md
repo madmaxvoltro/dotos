@@ -15,6 +15,7 @@ Dot boots straight into a black screen with one white dot, asks for your Windows
 - **Two monitors, arranged like your desk.** Drag the monitors into place at their real size, resize them from the corners, and Windows gets exactly that layout. Extend, main-only or mirror.
 - **Monitor-aware standby.** When the main monitor turns off, Dot locks the session (Windows keeps your apps open), mutes the sound and disconnects USB devices. It brings everything back when the monitor turns on.
 - **One volume.** Windows' volume slider and keys turn the real speakers up and down, whether that's the monitor's speakers or the Pi's output.
+- **Bluetooth.** Pair keyboards, mice, headphones and game controllers in Settings, with the PIN prompts some devices need. Headphones show up as a sound output; controllers work in game mode.
 - **Monitor controls over HDMI.** Brightness, contrast and speaker volume over DDC/CI, and power state over HDMI-CEC.
 - **The small things.** Wi-Fi and power from the login screen, an idle clock, settings behind an optional PIN, a boot splash, and updates from Settings.
 
@@ -66,6 +67,7 @@ Options go after `sudo bash -s --`, for example `... | sudo bash -s -- --tailsca
 | `--no-splash` | Keeps the normal text boot instead of the Dot splash |
 | `--no-reboot` | Doesn't restart at the end |
 | `--no-games` | Skips Moonlight (game mode) |
+| `--gui` | Shows the install on the Pi's own screen: the options as a menu, then progress, time left and the log |
 | `--branch dev` | Installs from another branch |
 
 The installer adds:
@@ -75,6 +77,14 @@ The installer adds:
 - **Game mode:** Moonlight
 
 It then creates a restricted `dot` user, installs the services and the boot splash, and restarts.
+
+Prefer to watch it on the Pi's monitor? Add `--gui`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/madmaxvoltro/dotos/main/install.sh | sudo bash -s -- --gui
+```
+
+The Pi's screen first shows the options (game mode, Tailscale, boot splash): **↑ ↓** to move, **Space** to change, **Enter** to install. It starts by itself after 90 seconds. Then it shows the Dot mark with a progress bar, the percentage, the time left and the install log on the left. The screen is a text console at this point, so it's keyboard only.
 
 ### 3. Set it up on the screen
 
