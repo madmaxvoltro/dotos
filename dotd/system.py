@@ -227,19 +227,42 @@ def power(action):
     subprocess.Popen(["systemctl", "poweroff" if action == "shutdown" else "reboot"])
 
 
+SWAY_INPUT = os.environ.get("DOT_SWAY_INPUT", "/var/lib/dot/sway-input.conf")
+
+
 def apply_kiosk_env(keyboard, scale):
-    """Values the kiosk session reads at start (see system/session.sh)."""
+    """Keyboard layout: applied to the running screen right away, and saved for the next start."""
     if DEV:
         return
+    layout = re.sub(r"[^a-z_,()-]", "", keyboard) or "us"
     os.makedirs(os.path.dirname(KIOSK_ENV), exist_ok=True)
     with open(KIOSK_ENV, "w") as f:
-        f.write(f"XKB_DEFAULT_LAYOUT={re.sub(r'[^a-z_,()-]', '', keyboard) or 'us'}\n")
-        f.write(f"DOT_SCALE={float(scale):.2f}\n")
+        f.write(f"XKB_DEFAULT_LAYOUT={layout}\nDOT_SCALE={float(scale):.2f}\n")
+    try:
+        with open(SWAY_INPUT, "w") as f:
+            f.write(f"input type:keyboard xkb_layout {layout}\n")
+    except OSError:
+        pass
+    from . import kiosk  # late: kiosk is only needed here
+    if "SWAYSOCK" in kiosk.env():
+        kiosk.run(["swaymsg", "input", "type:keyboard", "xkb_layout", layout], timeout=5)
 
 
 def restart_kiosk():
-    if not DEV:
-        subprocess.Popen(["systemctl", "restart", "dot-kiosk.service"])
+    """Reload what's on screen without restarting the screen session itself.
+
+    Restarting sway (the systemd unit) can leave the new session without the keyboard until a reboot
+    (logind doesn't always hand the input devices over), so: reload sway's config in place and
+    restart only the browsers; session.sh brings the main one straight back.
+    """
+    if DEV:
+        return
+    from . import kiosk
+    if "SWAYSOCK" in kiosk.env():
+        kiosk.run(["swaymsg", "reload"], timeout=5)
+        kiosk.run(["pkill", "-f", "--", "--user-data-dir=/var/lib/dot/chromium( |$)"], timeout=5)
+    else:  # the screen isn't running at all: starting it is safe
+        subprocess.Popen(["systemctl", "start", "dot-kiosk.service"])
 
 
 def set_timezone(tz):

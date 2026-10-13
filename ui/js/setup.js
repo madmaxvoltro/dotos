@@ -11,7 +11,6 @@ export function setup(root, { go }) {
   let cleanup = null;
   let mode = "list"; // servers / people: "list" | "form"
   let editing = null;
-  const startKeyboard = store.state.device.keyboard;
 
   function goto(n) {
     step = Math.max(0, Math.min(STEPS.length - 1, n));
@@ -39,13 +38,7 @@ export function setup(root, { go }) {
       head("Keyboard and time", "So your password types the way you expect, and the clock is right.");
       regionPanel(content);
       actions(html`<button class="btn btn-primary" data-on-click="next">Continue</button>`, {
-        next: async () => {
-          safeSet(STEP_KEY, step + 1);
-          if (store.state.device.keyboard !== startKeyboard && !store.state.dev) {
-            mount(content, html`<div class="row small"><span class="spinner"></span> Applying the keyboard layout…</div>`);
-            await api("/api/kiosk/restart", {}); // the page reloads into the next step
-          } else goto(step + 1);
-        },
+        next: () => goto(step + 1), // the layout is already live (dotd applies it as soon as it's picked)
       });
     }
 

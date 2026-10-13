@@ -326,6 +326,10 @@ install -d -o "$KIOSK_USER" -g "$KIOSK_USER" /var/lib/dot /var/lib/dot/chromium 
 printf 'd /run/dot 0755 root root -\nd /run/dot/inbox 0770 %s %s -\n' "$KIOSK_USER" "$KIOSK_USER" > /etc/tmpfiles.d/dot.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/dot.conf
 [ -f /var/lib/dot/sway-outputs.conf ] || : > /var/lib/dot/sway-outputs.conf
+if [ ! -f /var/lib/dot/sway-input.conf ]; then
+  layout=$(sed -n 's/^XKB_DEFAULT_LAYOUT=//p' /etc/dot/kiosk.env 2>/dev/null); layout=${layout:-us}
+  echo "input type:keyboard xkb_layout $layout" > /var/lib/dot/sway-input.conf
+fi
 [ -f /etc/dot/kiosk.env ] || printf 'XKB_DEFAULT_LAYOUT=us\nDOT_SCALE=1.00\n' > /etc/dot/kiosk.env
 
 # Dot's screen is a local page in Chromium: no password manager, autofill, translate or sign-in prompts
@@ -381,7 +385,19 @@ if [ "$UPDATE" -eq 1 ]; then
   step "Dot is up to date"
   sleep 3  # let the screens show it
   gui_done
-  systemctl restart dotd.service dot-kiosk.service
+  systemctl restart dotd.service
+  # never restart the screen session itself: logind may not hand it the keyboard again until a reboot.
+  # Reload sway's config in place and restart just the browsers (session.sh brings the main one back).
+  if systemctl is-active -q dot-kiosk.service; then
+    uid=$(id -u "$KIOSK_USER")
+    sock=$(sed -n 's/^SWAYSOCK=//p' "/run/user/$uid/dot-session.env" 2>/dev/null)
+    if [ -n "$sock" ]; then
+      runuser -u "$KIOSK_USER" -- env SWAYSOCK="$sock" XDG_RUNTIME_DIR="/run/user/$uid" swaymsg reload >/dev/null 2>&1 || true
+    fi
+    pkill -u "$KIOSK_USER" -f -- "--user-data-dir=/var/lib/dot/chromium( |\$)" || true
+  else
+    systemctl start dot-kiosk.service
+  fi
   exit 0
 fi
 

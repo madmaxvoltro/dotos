@@ -392,7 +392,7 @@ export function regionPanel(root) {
       <label><span class="label">Time zone</span><span class="field">${icon("globe", 18)}<select name="timezone" data-on-change="tz">
         ${timezones.map((t) => html`<option ${t === zone ? "selected" : ""}>${t}</option>`)}</select>${icon("chevDown", 16)}</span></label>
       <div class="setting"><div class="grow"><div class="t">24-hour clock</div></div>${switchEl("use24h", d.use24h, "24-hour clock")}</div>
-      <p class="small" style="margin:4px">A new keyboard layout applies when Dot restarts its screen, which takes a second.</p>
+      <p class="small" style="margin:4px">A new keyboard layout works right away. Try it in any text field.</p>
     </div>`);
     bind(root, {
       kb: (e) => save({ device: { keyboard: e.target.value } }),

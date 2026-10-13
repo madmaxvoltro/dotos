@@ -108,8 +108,8 @@ export function settings(root, { go, token }) {
     if (section === "device") {
       title("This Dot");
       mount(body, html`<div id="region"></div><div class="section-gap" id="prefs"></div><div class="section-gap"><span class="label">Security</span><div id="pin"></div></div>
-        <div class="section-gap"><div class="setting"><div class="grow"><div class="t">Apply keyboard layout</div><div class="s">Restarts the screen so a new layout takes effect.</div></div>
-        <button class="btn btn-raised btn-sm" data-on-click="kiosk">Restart screen</button></div></div>`);
+        <div class="section-gap"><div class="setting"><div class="grow"><div class="t">Reload the screen</div><div class="s">Reloads Dot's screen, for example if something looks stuck. Keyboard layouts apply right away.</div></div>
+        <button class="btn btn-raised btn-sm" data-on-click="kiosk">Reload</button></div></div>`);
       regionPanel($("#region", body));
       preferencesPanel($("#prefs", body), { connection: false });
       pinPanel($("#pin", body));
