@@ -126,7 +126,9 @@ export function login(root, { go }) {
     if (ui.error) card = errorCard(ui.error.kind, ui.error.details);
     else if (!st.network.connected) card = notice("wifiOff", "No internet", "Check the cable or choose a network.", '<button type="button" class="btn btn-raised btn-sm" data-on-click="openWifi">Wi-Fi</button>');
     else if (s && s.latency == null) card = notice("server", `Can't reach ${s.name}`, "The network works. Check that the server is on.");
-    else if (st.lastEnd?.reason === "screen_off" && Date.now() / 1000 - st.lastEnd.at < 4 * 3600) {
+    else if (st.lastEnd && ["wrong", "expired", "locked", "disabled", "denied"].includes(st.lastEnd.reason) && Date.now() / 1000 - st.lastEnd.at < 600) {
+      card = errorCard(st.lastEnd.reason, st.lastEnd.detail);
+    } else if (st.lastEnd?.reason === "screen_off" && Date.now() / 1000 - st.lastEnd.at < 4 * 3600) {
       card = notice("monitor", "Locked while the monitor was off", "Your session is still open on the server. Sign in to carry on.");
     } else if (st.lastEnd && st.lastEnd.reason !== "signed_out" && Date.now() / 1000 - st.lastEnd.at < 600) {
       card = st.lastEnd.reason === "server"

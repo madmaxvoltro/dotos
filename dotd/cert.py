@@ -49,7 +49,7 @@ def _describe(der):
     return {"subject": name(info.get("subject")), "issuer": name(info.get("issuer")), "expires": info.get("notAfter", "")}
 
 
-def fetch(host, port=3389, timeout=6):
+def fetch(host, port=3389, timeout=6, check_trust=True):
     """{fingerprint, fingerprintColons, subject, issuer, expires, selfSigned, trusted} or {"error": ...}."""
     if system.DEV:
         if "trusted" in host:
@@ -71,8 +71,11 @@ def fetch(host, port=3389, timeout=6):
     fp = hashlib.sha256(der).hexdigest()
     info = _describe(der)
     # 2. would a normal, verifying client accept it? (a certificate from a trusted authority, for this name)
+    #    Skipped when Dot already knows which certificate to expect: one handshake instead of two.
     trusted = False
     try:
+        if not check_trust:
+            raise ConnectionError("not needed")
         with ssl.create_default_context().wrap_socket(_negotiate(host, port, timeout), server_hostname=host):
             trusted = True
     except (OSError, ssl.SSLError, ConnectionError):

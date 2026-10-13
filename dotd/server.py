@@ -134,7 +134,8 @@ class Dot:
     def cert_decision(self, server, accept=None, remember=False):
         """(fingerprint to pin, None) when Dot may connect, or (None, prompt) when the user has to decide.
         accept: the fingerprint the user just approved in the warning."""
-        c = cert.fetch(server["host"], server.get("port") or 3389)
+        known = server.get("certFingerprint") or self.certs.get(server["id"])
+        c = cert.fetch(server["host"], server.get("port") or 3389, check_trust=not known and not accept)
         if "error" in c:
             return None, None  # can't look (e.g. plain RDP without TLS): FreeRDP's own checks apply
         fp = c["fingerprint"]
@@ -181,8 +182,19 @@ class Dot:
                 if prompt:  # ask before any password goes to a server Dot can't vouch for
                     self.connecting = None
                     return {"ok": False, "error": "cert", "cert": prompt, "serverId": server["id"]}
-                step("Checking the password")
                 acct = account_for(profile, server)
+                if not game:
+                    # one sign-in, not two: the session itself checks the password. A wrong one ends it
+                    # within a second or two and the login screen shows why (see _ended).
+                    self.cfg.mutate(lambda d: d.update(lastProfile=profile_id))
+                    self.last_end = None
+                    self.connecting = None
+                    self.secret = {"profileId": profile_id, "serverId": server["id"], "password": password,
+                                   "fingerprint": fingerprint}
+                    print(f"login: {server['name']}: starting the session", flush=True)
+                    self._open_session(server, profile, password, fingerprint=fingerprint)
+                    return {"ok": True, "serverId": server["id"], "failover": server["id"] != server_id}
+                step("Checking the password")
                 result, details = rdp.check_password(self.client, server, acct, password, cfg, fingerprint=fingerprint)
                 if result == "cert" and fingerprint and fingerprint != "ignore":
                     # FreeRDP didn't take the pinned fingerprint; Dot verified this very certificate a moment ago
@@ -258,8 +270,16 @@ class Dot:
             self.session.stop("screen_off")
 
     def _ended(self, reason, detail):
+        ended = self.session
         self.displays.session_ended()
         self.session = None
+        if (reason == "cert" and ended and ended.fingerprint not in (None, "ignore") and self.secret
+                and time.time() - ended.started < 30):
+            # FreeRDP didn't take the pinned fingerprint; Dot verified this certificate itself moments ago
+            print("login: FreeRDP rejected the pinned certificate; reconnecting with Dot's own check", flush=True)
+            self.secret["fingerprint"] = "ignore"
+            self.reconnect()
+            return
         if reason == "game":  # game mode took the session over; Dot brings it back afterwards
             return
         if reason == "server" and self.secret:

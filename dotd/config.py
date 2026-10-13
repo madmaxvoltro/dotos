@@ -35,7 +35,7 @@ DEFAULTS = {
         "clipboard": True,
         "usbDrives": False,
         "client": "auto",  # auto | x11 | sdl: which FreeRDP client
-        "graphics": "auto",  # auto (GFX / H.264) | compatible (older bitmap updates, for black screens)
+        "graphics": "auto",  # auto (GFX, AVC444) | light (AVC420: easier to decode on a Pi 4) | compatible (no GFX)
         "debugLog": False,  # FreeRDP's detailed log in Dot's log, for "why doesn't it connect?"
     },
     "screen": {

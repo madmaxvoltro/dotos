@@ -132,7 +132,8 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
     # GFX (the H.264 graphics pipeline) is fast but some Windows / client combinations show only black;
     # "compatible" uses the older bitmap updates instead
     compatible = rdp.get("graphics") == "compatible"
-    args += ["/f", "-gfx" if compatible else "/gfx", "/title:Dot Session"]
+    gfx = {"compatible": "-gfx", "light": "/gfx:AVC420"}.get(rdp.get("graphics"), "/gfx")
+    args += ["/f", gfx, "/title:Dot Session"]
     if "xfreerdp" in os.path.basename(client["bin"]):
         args.append("/wm-class:dot-session")  # X11 only; sway's window rules match it
     args += QUALITY.get(rdp.get("quality"), QUALITY["auto"])
@@ -211,9 +212,10 @@ class Session:
         self.expected = None  # an ending Dot asked for (game mode taking the session over)
         self.single = single
         self.output = []  # FreeRDP's last lines, for the session screen's Details
+        self.fingerprint = fingerprint
         if system.DEV:
             self.proc = None
-            threading.Thread(target=self._dev_wait, daemon=True).start()
+            threading.Thread(target=self._dev_wait, args=(password,), daemon=True).start()
             return
         self.proc = _popen(client, build_args(client, server, profile, password, cfg, outputs=outputs, single=single,
                                               fingerprint=fingerprint))
@@ -236,7 +238,12 @@ class Session:
         else:
             self.on_end(classify(code, out), out[-2000:])
 
-    def _dev_wait(self):
+    def _dev_wait(self, password):
+        if password != "dot":  # like a real session: Windows refuses within a second or two
+            time.sleep(1.5)
+            self.output = ["[ERROR][com.freerdp.core] - nla_recv_pdu: ERRCONNECT_LOGON_FAILURE [0x00020014] (dev)"]
+            self.on_end("expired" if password == "expired" else "locked" if password == "locked" else "wrong", self.output[0])
+            return
         end = time.time() + 45
         while time.time() < end and not self.stop_reason:
             time.sleep(0.2)
