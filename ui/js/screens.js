@@ -1,7 +1,7 @@
 // Boot, idle clock and the in-session backdrop.
 
 import { $, api, bind, html, icon, mount, refresh, store, toast, watch } from "./lib.js";
-import { detailsModal } from "./parts.js";
+import { detailsModal, soundPanel } from "./parts.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -141,20 +141,32 @@ export function idle(root, { wake }) {
 }
 
 /** Under the FreeRDP window: visible only while it opens or closes. */
+/** Under the session window. Ctrl+Alt+Shift+D brings it in front as Dot's session menu. */
 export function session(root) {
+  let stopSound = null;
   const render = (st) => {
     if (!st) return;
+    stopSound?.(); stopSound = null;
     const sid = st.session?.serverId || st.connecting?.serverId;
     const name = st.servers.find((s) => s.id === sid)?.name || "the server";
+    const menu = st.sessionMenu;
     mount(root, html`<div class="screen session"><div class="mark"></div><div class="msg">${st.session ? `Signed in to ${name}` : `Connecting to ${name}`}</div>
-      ${st.session ? html`<p class="small" style="margin:-8px 0 0;max-width:420px;text-align:center;line-height:1.5">Windows should be on screen now. If you can see this instead:</p>
+      ${st.session ? html`<p class="small" style="margin:-8px 0 0;max-width:460px;text-align:center;line-height:1.5">${menu
+        ? "Disconnecting keeps Windows and your apps running: sign in again to carry on."
+        : "Windows should be on screen now. If you can see this instead:"}</p>
+      ${menu ? html`<div class="panel" style="width:340px;padding:10px"><div id="sound"></div></div>` : ""}
       <div class="row">
-        <button class="btn btn-raised" data-on-click="show">Show Windows</button>
+        <button class="btn btn-primary" data-on-click="show">${menu ? "Back to Windows" : "Show Windows"}</button>
+        <button class="btn btn-raised btn-danger" data-on-click="disconnect">Disconnect</button>
         <button class="btn btn-ghost" data-on-click="details">Details</button>
-        <button class="btn btn-ghost btn-danger" data-on-click="disconnect">Disconnect</button>
-      </div>` : ""}</div>`);
+      </div>
+      <p class="small" style="margin:6px 0 0;text-align:center;line-height:1.6;color:rgba(255,255,255,.4)">Ctrl + Alt + Shift + D opens this menu from Windows.<br>In Windows, Start → your name → Disconnect or Sign out also comes back here.</p>` : ""}</div>`);
+    if (menu) {
+      stopSound = soundPanel($("#sound", root), { compact: true });
+      $('[data-on-click="show"]', root)?.focus();
+    }
     bind(root, {
-      show: async () => { const r = await api("/api/session/show", {}); if (!r.ok) toast("No Remote Desktop window found. Details shows what FreeRDP said."); },
+      show: async () => { const r = await api("/api/session/show", {}); refresh(); if (!r.ok) toast("No Remote Desktop window found. Details shows what FreeRDP said."); },
       details: async () => {
         const { lines = [] } = await api("/api/session/log");
         detailsModal("Remote Desktop (FreeRDP)", lines.join("\n") || "FreeRDP hasn't said anything yet.");
@@ -163,7 +175,15 @@ export function session(root) {
     });
   };
   render(store.state);
-  return watch((st) => [st.session?.serverId, st.connecting?.serverId], render);
+  // Esc in the menu: straight back to Windows
+  const onKey = (e) => {
+    if (e.key === "Escape" && store.state?.sessionMenu && !document.querySelector(".scrim")) {
+      api("/api/session/show", {}).then(refresh);
+    }
+  };
+  window.addEventListener("keydown", onKey);
+  const stop = watch((st) => [st.session?.serverId, st.connecting?.serverId, st.sessionMenu], render);
+  return () => { stop(); stopSound?.(); window.removeEventListener("keydown", onKey); };
 }
 
 /** Game mode on the main monitor: the shutter from the board while it switches, then (under Moonlight) what's playing. */

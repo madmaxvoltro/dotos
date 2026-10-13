@@ -326,6 +326,16 @@ class Displays:
         print("displays: no session window appeared", flush=True)
         return False
 
+    def show_dot(self):
+        """Dot's own screen in front of the session (the session menu)."""
+        main = self.main()
+        if DEV:
+            return
+        swaymsg(f'[title="^{UI_TITLE}$"] fullscreen enable, focus', raw=True)
+        if main:
+            swaymsg(f"focus output {main['name']}", raw=True)
+            swaymsg(f'[title="^{UI_TITLE}$"] focus', raw=True)
+
     def session_ended(self):
         swaymsg('[app_id="at.yrlf.wl_mirror"] kill', raw=True)
 

@@ -41,6 +41,7 @@ class Dot:
         # reconnect after game mode; wiped at sign-out, standby, shutdown and whenever dotd restarts
         self.secret = None
         self.last_error = None  # the last sign-in failure, with FreeRDP's own words
+        self.session_menu = False  # Ctrl+Alt+Shift+D: Dot's menu over the session
         self.certs = {}  # server id -> fingerprint approved for this run only ("connect anyway" without remembering)
         self.connecting = None  # {"profileId", "serverId"} while signing in
         self.last_end = None
@@ -125,6 +126,7 @@ class Dot:
             "connecting": self.connecting,
             "lastEnd": self.last_end,
             "canReconnect": bool(self.secret and self.secret.get("lostAt") and not self.session),
+            "sessionMenu": bool(self.session and self.session_menu),
         }
 
     # sign in -------------------------------------------------------------------
@@ -396,9 +398,16 @@ def make_handler(dot: Dot, ui_dir: str):
                 return self.send_json(dot.login(data.get("profileId"), data.get("serverId"), data.get("password", ""),
                                                 game=bool(data.get("game")), accept_cert=data.get("acceptCert"),
                                                 remember_cert=bool(data.get("rememberCert"))))
+            if path == "/api/session/menu":
+                if dot.session:  # the hotkey from sway; only means something during a session
+                    dot.session_menu = True
+                    dot.displays.show_dot()
+                return self.send_json({"ok": bool(dot.session)})
             if path == "/api/session/show":
+                dot.session_menu = False
                 return self.send_json({"ok": dot.displays.raise_session(wait=3)})
             if path == "/api/session/disconnect":
+                dot.session_menu = False
                 if dot.session:
                     dot.session.stop("signed_out")  # Windows keeps the session; sign in again to carry on
                 return self.send_json({"ok": True})
