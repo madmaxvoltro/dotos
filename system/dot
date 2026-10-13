@@ -67,8 +67,19 @@ case "${1:-diag}" in
       json '{k: d["audio"].get(k) for k in ("volume","muted","using","sink","sinks","followWindows","target")}'
       h "Bluetooth"
       json '{k: d["bluetooth"].get(k) for k in ("available","powered","devices")}'
+      h "EDID over the cable (what Dot can read itself)"
+      for c in /sys/class/drm/card*-HDMI-A-*; do
+        [ "$(cat "$c/status" 2>/dev/null)" = connected ] || continue
+        conn=${c#*-}
+        (cd /usr/lib/dot && python3 -c "
+from dotd import edid
+d = edid.from_monitor('$conn')
+print('  $conn:', 'read %d bytes, preferred mode %s' % (len(d), edid.preferred_mode(d)) if d else
+      'nothing answers on the cable\'s DDC wires. Try another micro-HDMI cable or adapter (cheap ones often leave these wires out), or the other HDMI port.')
+")
+      done
       h "Recent Dot log"
-      journalctl -b -u dotd --no-pager -n 40 2>/dev/null | sed 's/^/  /'
+      journalctl -b -u dotd --no-pager -n 400 2>/dev/null | grep -v -e "runuser" -e "pam_unix" | tail -50 | sed 's/^/  /'
     } 2>&1 | tee /tmp/dot-diag.txt
     echo; echo "Saved to /tmp/dot-diag.txt"
     ;;

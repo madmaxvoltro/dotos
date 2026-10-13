@@ -14,6 +14,7 @@ export const ACCOUNT_ERRORS = {
   noclient: ["info", "FreeRDP is missing", "Run the installer again to add it."],
   noserver: ["server", "No server set up", "Add a server in Settings."],
   unknown: ["info", "Couldn't sign in", "Something unexpected happened. Try again."],
+  internal: ["info", "Something went wrong in Dot", "This is a bug in Dot, not your password. Details shows the error; please send it."],
   noanswer: ["server", "Remote Desktop didn't answer", "The server took too long. Details shows what happened."],
   certcheck: ["shield", "Certificate not checked yet", "Sign in once from the login screen to review this server's certificate, then check the password here."],
   off: ["gamepad", "Game mode isn't set up", "Choose how this server plays games in Settings → Games."],

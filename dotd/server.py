@@ -2,6 +2,7 @@
 
 import json
 import mimetypes
+import traceback
 import os
 import secrets
 import threading
@@ -334,6 +335,25 @@ def make_handler(dot: Dot, ui_dir: str):
         # routes ----------------------------------------------------------------
 
         def do_GET(self):
+            self._safely(self._get)
+
+        def do_POST(self):
+            self._safely(self._post)
+
+        def _safely(self, handler):
+            """A bug in Dot shows up on screen (Details) and in the log, instead of a dropped request."""
+            try:
+                handler()
+            except Exception:
+                tb = traceback.format_exc()
+                print(f"error handling {self.command} {self.path}:\n{tb}", flush=True)
+                dot.last_error = {"server": "Dot", "error": "internal", "details": tb, "at": time.time()}
+                try:
+                    self.send_json({"ok": False, "error": "internal", "details": tb}, 500)
+                except OSError:
+                    pass
+
+        def _get(self):
             url = urlparse(self.path)
             q = parse_qs(url.query)
             if url.path == "/api/state":
@@ -364,7 +384,7 @@ def make_handler(dot: Dot, ui_dir: str):
                 return self.send_json({"error": "not found"}, 404)
             return self.serve_static(url.path)
 
-        def do_POST(self):
+        def _post(self):
             path = urlparse(self.path).path
             data = self.body()
 

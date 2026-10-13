@@ -15,30 +15,15 @@ import subprocess
 import threading
 import time
 
-from . import system
-
-try:
-    import pwd
-except ImportError:
-    pwd = None
+from . import kiosk, system
 
 DEV = system.DEV
 KIOSK_USER = os.environ.get("DOT_USER", "dot")
 FREERDP_BINARIES = ("sdl-freerdp3", "sdl-freerdp", "xfreerdp3", "wlfreerdp3", "xfreerdp", "wlfreerdp")
 
 
-def _env_prefix():
-    if pwd is None:
-        return []
-    try:
-        uid = pwd.getpwnam(KIOSK_USER).pw_uid
-    except KeyError:
-        return []
-    return ["runuser", "-u", KIOSK_USER, "--", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}"]
-
-
 def pactl(*args, parse=False):
-    code, out, _ = system.run(_env_prefix() + ["pactl", *(["-f", "json"] if parse else []), *args], timeout=5)
+    code, out, _ = kiosk.run(["pactl", *(["-f", "json"] if parse else []), *args], timeout=5)
     if code != 0:
         return None
     if not parse:
@@ -203,7 +188,7 @@ class Audio:
                 time.sleep(0.5)
         while True:
             try:
-                proc = subprocess.Popen(_env_prefix() + ["pactl", "subscribe"], stdout=subprocess.PIPE, text=True)
+                proc = kiosk.popen(["pactl", "subscribe"], stdout=subprocess.PIPE, text=True)
                 last = 0.0
                 for line in proc.stdout:
                     if "sink-input" in line and time.time() - last > 0.1:

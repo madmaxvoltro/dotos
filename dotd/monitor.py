@@ -17,13 +17,9 @@ import select
 import struct
 import threading
 import time
+import traceback
 
-from . import edid, system
-
-try:
-    import pwd
-except ImportError:
-    pwd = None
+from . import edid, kiosk, system
 
 DEV = system.DEV
 SNAPSHOT_FILE = os.environ.get("DOT_STANDBY_FILE", "/var/lib/dot/standby.json")
@@ -173,20 +169,10 @@ def connectors():
 
 # audio on the Pi (PipeWire in the kiosk session, ALSA as a fallback) --------------------------------------
 
-def _kiosk_cmd(cmd):
-    if pwd is None:
-        return cmd
-    try:
-        uid = pwd.getpwnam(KIOSK_USER).pw_uid
-    except KeyError:
-        return cmd
-    return ["runuser", "-u", KIOSK_USER, "--", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", *cmd]
-
-
 def pi_muted():
     if DEV:
         return False
-    _, out, _ = system.run(_kiosk_cmd(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]), timeout=4)
+    _, out, _ = kiosk.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], timeout=4)
     if "Volume:" in out:
         return "MUTED" in out
     _, out, _ = system.run(["amixer", "get", "Master"], timeout=4)
@@ -196,7 +182,7 @@ def pi_muted():
 def pi_set_muted(muted):
     if DEV:
         return
-    rc, _, _ = system.run(_kiosk_cmd(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1" if muted else "0"]), timeout=4)
+    rc, _, _ = kiosk.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1" if muted else "0"], timeout=4)
     if rc != 0:
         system.run(["amixer", "-q", "set", "Master", "mute" if muted else "unmute"], timeout=4)
 
@@ -526,15 +512,19 @@ class Monitor:
         """Standby for `seconds`, right now. It doesn't wait for the monitor check loop, which can take
         longer than the whole test when a monitor answers DDC/CI slowly."""
         def run():
-            with self.lock:
-                self.test_until = time.time() + seconds
-                if not self.snapshot:
-                    self.enter_standby()
-            time.sleep(seconds)
-            with self.lock:
-                self.test_until = 0
-                if self.snapshot and self._main_state()[0] != "off":
-                    self.leave_standby()
+            try:
+                with self.lock:
+                    self.test_until = time.time() + seconds
+                    if not self.snapshot:
+                        self.enter_standby()
+                time.sleep(seconds)
+            except Exception:
+                print(f"monitor: test standby failed:\n{traceback.format_exc()}", flush=True)
+            finally:
+                with self.lock:
+                    self.test_until = 0
+                    if self.snapshot and self._main_state()[0] != "off":
+                        self.leave_standby()
 
         threading.Thread(target=run, daemon=True).start()
 
