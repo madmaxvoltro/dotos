@@ -132,7 +132,9 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
     # GFX (the H.264 graphics pipeline) is fast but some Windows / client combinations show only black;
     # "compatible" uses the older bitmap updates instead
     compatible = rdp.get("graphics") == "compatible"
-    gfx = {"compatible": "-gfx", "light": "/gfx:AVC420"}.get(rdp.get("graphics"), "/gfx")
+    # sharp: RemoteFX/progressive, crisp text and little work while the screen is still (a Pi decodes in
+    # software); light ("Smooth"): one H.264 stream; auto ("Best"): AVC444; compatible: no graphics pipeline
+    gfx = {"compatible": "-gfx", "light": "/gfx:AVC420", "sharp": "/gfx:RFX"}.get(rdp.get("graphics"), "/gfx")
     args += ["/f", gfx, "/title:Dot Session"]
     if "xfreerdp" in os.path.basename(client["bin"]):
         args.append("/wm-class:dot-session")  # X11 only; sway's window rules match it
