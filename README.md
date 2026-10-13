@@ -160,7 +160,7 @@ Games stream from a Windows PC to the Pi with [Moonlight](https://moonlight-stre
    irm https://raw.githubusercontent.com/madmaxvoltro/dotos/main/windows/install.ps1 | iex
    ```
 
-   This installs Sunshine (with winget), **Game** on the desktop and in the Start menu, and Dot Helper in the tray. Game and Dot Helper are compiled on the PC from [`windows/DotHelper.cs`](windows/DotHelper.cs) with the C# compiler that ships with Windows, so no prebuilt program is downloaded.
+   This installs **Game** on the desktop and in the Start menu, and Dot Helper in the tray. Game and Dot Helper are compiled on the PC from [`windows/DotHelper.cs`](windows/DotHelper.cs) with the C# compiler that ships with Windows, so no prebuilt program is downloaded. It doesn't install a streaming host: install [Sunshine](https://github.com/LizardByte/Sunshine) or [Apollo](https://github.com/ClassicOldSong/Apollo) yourself on the gaming PC first.
 2. **On the Dot:** open Settings → Games, choose how each server plays games, then press **Pair**. If Dot Helper is running and you're signed in to that PC, the PIN is entered for you; otherwise type it into Sunshine's web page.
 
 **Three setups, chosen per server:**

@@ -6,15 +6,17 @@
 # It installs:
 #   - Game.exe (desktop + Start menu): start game mode from inside your Dot session
 #   - Dot Helper (tray, starts with Windows): game mode menu, and enters the Dot's pairing PIN for you
-#   - Sunshine (with winget), the game streaming host Moonlight on the Dot connects to
 #   - a scheduled task that hands your Windows session to the GPU when a game starts (same-PC setup)
 #
 # Game.exe and Dot Helper are compiled here from source (windows/DotHelper.cs) with the C# compiler
 # that comes with Windows, so nothing prebuilt is downloaded and SmartScreen has nothing to flag.
 #
-# Options when run as a file:  .\install.ps1 -SkipSunshine   .\install.ps1 -Uninstall
+# It doesn't install a game streaming host: install Sunshine or Apollo yourself on the PC that runs the
+# games. If one is already here, this offers to let Dot Helper enter pairing PINs into it for you.
+#
+# Option when run as a file:  .\install.ps1 -Uninstall
 
-param([switch]$SkipSunshine, [switch]$Uninstall)
+param([switch]$Uninstall)
 
 $ErrorActionPreference = "Stop"
 $Source = "https://raw.githubusercontent.com/madmaxvoltro/dotos/main/windows"
@@ -46,7 +48,6 @@ if ($Uninstall) {
     Remove-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Dot Helper" -ErrorAction SilentlyContinue
     $shortcuts | ForEach-Object { Remove-Item $_ -ErrorAction SilentlyContinue }
     Remove-Item $AppDir, $DataDir -Recurse -Force -ErrorAction SilentlyContinue
-    Info "Sunshine stays installed; remove it in Settings > Apps if you don't need it."
     return
 }
 
@@ -96,53 +97,29 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 Register-ScheduledTask -TaskName "SwitchToConsole" -TaskPath "\Dot\" -Action $action -Principal $principal -Settings $settings -Force | Out-Null
 Info "for $user"
 
-# 4. Sunshine ---------------------------------------------------------------------------------------------------
+# 4. Pairing with Sunshine / Apollo, if it's here -----------------------------------------------------------------
 
-if (-not $SkipSunshine) {
-    Step "Sunshine (the game streaming host)"
-    $sunshineExe = Join-Path $env:ProgramFiles "Sunshine\sunshine.exe"
-    $fresh = -not (Test-Path $sunshineExe)
-    if ($fresh) {
-        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            Info "winget isn't available. Install Sunshine from https://github.com/LizardByte/Sunshine/releases, then run this again."
-        } else {
-            winget install --id LizardByte.Sunshine -e --silent --accept-source-agreements --accept-package-agreements
-        }
-    } else {
-        Info "already installed"
-    }
-
-    if (Test-Path $sunshineExe) {
-        # Dot Helper enters pairing PINs through Sunshine's local web API, which needs a login.
-        $credFile = Join-Path $DataDir "sunshine.dat"
-        $login = $null
-        if ($fresh) {
-            $pw = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
-            & $sunshineExe --creds dot $pw | Out-Null
-            Get-Service -Name "*sunshine*" -ErrorAction SilentlyContinue | Restart-Service -ErrorAction SilentlyContinue
-            $login = "dot:$pw"
-            Write-Host ""
-            Write-Host "    Sunshine's web page (https://localhost:47990) login: dot / $pw" -ForegroundColor Yellow
-            Write-Host "    Write it down; it isn't shown again." -ForegroundColor Yellow
-        } elseif (-not (Test-Path $credFile)) {
-            Write-Host ""
-            Write-Host "    To let Dot pair by itself, enter your Sunshine web login (or press Enter to skip;" -ForegroundColor Gray
-            Write-Host "    you'll type the PIN in Sunshine's page instead)." -ForegroundColor Gray
-            $u = Read-Host "    Sunshine user name"
-            if ($u) {
-                $p = Read-Host "    Sunshine password" -AsSecureString
-                $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($p))
-                $login = "${u}:$plain"
-            }
-        }
-        if ($login) {
-            Add-Type -AssemblyName System.Security
-            $bytes = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($login), $null, "LocalMachine")
-            [IO.File]::WriteAllBytes($credFile, $bytes)
-            # readable by administrators and the people who sign in to this PC, encrypted to this machine
-            icacls $credFile /inheritance:r /grant:r "*S-1-5-32-544:F" "*S-1-5-18:F" "*S-1-5-32-545:R" | Out-Null
-            Info "Dot Helper can pair automatically"
-        }
+$hostExe = @("Sunshine\sunshine.exe", "Apollo\sunshine.exe", "Apollo\apollo.exe") |
+    ForEach-Object { Join-Path $env:ProgramFiles $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
+$credFile = Join-Path $DataDir "sunshine.dat"
+if (-not $hostExe) {
+    Step "No Sunshine or Apollo on this PC"
+    Info "Install one yourself on the PC that runs the games; Dot doesn't install it."
+} elseif (-not (Test-Path $credFile)) {
+    Step "Pairing with $(Split-Path (Split-Path $hostExe) -Leaf)"
+    # Dot Helper enters pairing PINs through its local web API (https://localhost:47990), which needs its login
+    Write-Host "    To let Dot pair by itself, enter its web page login (or press Enter to skip;" -ForegroundColor Gray
+    Write-Host "    you'll type the PIN in its web page instead)." -ForegroundColor Gray
+    $u = Read-Host "    User name"
+    if ($u) {
+        $p = Read-Host "    Password" -AsSecureString
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($p))
+        Add-Type -AssemblyName System.Security
+        $bytes = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes("${u}:$plain"), $null, "LocalMachine")
+        [IO.File]::WriteAllBytes($credFile, $bytes)
+        # readable by administrators and the people who sign in to this PC, encrypted to this machine
+        icacls $credFile /inheritance:r /grant:r "*S-1-5-32-544:F" "*S-1-5-18:F" "*S-1-5-32-545:R" | Out-Null
+        Info "Dot Helper can pair automatically"
     }
 }
 
