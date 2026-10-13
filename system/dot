@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# dot: look under the hood of a Dot over SSH.
+#
+#   sudo dot diag           everything about monitors, DDC/CI, CEC, standby, sound and Bluetooth
+#                           (also saved to /tmp/dot-diag.txt, to paste somewhere)
+#   sudo dot test-standby   act as if the main monitor turned off for 10 s, and watch what happens
+#   sudo dot ddc [BUS]      try reading the monitor's brightness and power over DDC/CI
+#   dot logs                follow Dot's logs
+#   sudo dot update [--gui] update Dot
+set -uo pipefail
+
+API=http://127.0.0.1:7777
+[ "$(id -u)" -eq 0 ] || [ "${1:-}" = logs ] || { echo "Run with sudo: sudo dot ${1:-diag}"; exit 1; }
+
+h() { printf '\n\033[1m● %s\033[0m\n' "$*"; }
+json() {  # json PYTHON-EXPRESSION: print something from Dot's state (d = /api/state)
+  curl -fs "$API/api/state" | python3 -c "import json,sys; d=json.load(sys.stdin); r=$1; print(json.dumps(r, indent=2) if not isinstance(r, str) else r)" \
+    2>/dev/null || echo "  (dotd isn't answering)"
+}
+ports() {  # each HDMI port: connector name, status, EDID size, I2C bus
+  for c in /sys/class/drm/card*-HDMI-A-*; do
+    [ -e "$c/status" ] || continue
+    bus=""; [ -e "$c/ddc" ] && bus=$(basename "$(readlink -f "$c/ddc")")
+    printf '  %-10s %-13s EDID %4s bytes   %s\n' "${c##*-HDMI}" "$(cat "$c/status")" "$(wc -c < "$c/edid" 2>/dev/null || echo 0)" "${bus:-no i2c link}" \
+      | sed 's/^  -/  HDMI-/'
+  done
+}
+buses() { for c in /sys/class/drm/card*-HDMI-A-*; do [ "$(cat "$c/status" 2>/dev/null)" = connected ] && [ -e "$c/ddc" ] && basename "$(readlink -f "$c/ddc")" | sed 's/i2c-//'; done; }
+
+ddc_test() {
+  local list=${1:-$(buses)}
+  [ -n "$list" ] || { echo "  no connected HDMI port with an I2C link"; return; }
+  for b in $list; do
+    echo "  bus $b:"
+    for slow in "" "--sleep-multiplier 2"; do
+      for vcp in 10 D6; do
+        # shellcheck disable=SC2086
+        out=$(timeout 15 ddcutil --bus "$b" $slow --brief getvcp $vcp 2>&1 | tail -1)
+        printf '    %-24s VCP %s (%s): %s\n' "${slow:-normal timing}" "$vcp" "$([ $vcp = 10 ] && echo brightness || echo power)" "$out"
+      done
+    done
+  done
+}
+
+case "${1:-diag}" in
+  diag)
+    {
+      h "Dot"
+      echo "  version $(cat /usr/lib/dot/VERSION 2>/dev/null || echo ?) · $(tr -d '\0' < /proc/device-tree/model) · $(. /etc/os-release; echo "$PRETTY_NAME")"
+      echo "  dotd: $(systemctl is-active dotd)   screen: $(systemctl is-active dot-kiosk)   up $(uptime -p)"
+      json '"setup complete" if d["setupComplete"] else "setup NOT complete: standby stays off until it is"'
+      h "HDMI ports"
+      ports
+      h "What Dot sees (monitors, standby)"
+      json '{"monitor": d["monitor"], "standby settings": d["screen"] | {}, "outputs": [{k: o.get(k) for k in ("name","label","mode","edid","detectedMode","main")} for o in d["displays"]["outputs"]]}'
+      h "I2C"
+      ls /dev/i2c-* 2>/dev/null | tr '\n' ' '; echo
+      lsmod | grep -q i2c_dev && echo "  i2c-dev loaded" || echo "  i2c-dev NOT loaded (sudo modprobe i2c-dev)"
+      h "ddcutil detect"
+      timeout 40 ddcutil detect --terse 2>&1 | sed 's/^/  /'
+      h "DDC/CI reads"
+      ddc_test
+      h "HDMI-CEC"
+      ls /dev/cec* 2>/dev/null | tr '\n' ' ' || true; echo
+      for c in /dev/cec*; do [ -e "$c" ] && timeout 8 cec-ctl -d "$c" --to 0 --give-device-power-status 2>&1 | grep -iE "pwr-state|error|fail" | sed "s|^|  $c: |"; done
+      h "Sound"
+      json '{k: d["audio"].get(k) for k in ("volume","muted","using","sink","sinks","followWindows","target")}'
+      h "Bluetooth"
+      json '{k: d["bluetooth"].get(k) for k in ("available","powered","devices")}'
+      h "Recent Dot log"
+      journalctl -b -u dotd --no-pager -n 40 2>/dev/null | sed 's/^/  /'
+    } 2>&1 | tee /tmp/dot-diag.txt
+    echo; echo "Saved to /tmp/dot-diag.txt"
+    ;;
+
+  test-standby)
+    token=$(curl -fs -X POST "$API/api/admin/unlock" -H 'Content-Type: application/json' -d '{"pin":""}' \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token") or "")')
+    if [ -z "$token" ]; then
+      read -rsp "Settings PIN: " pin; echo
+      token=$(curl -fs -X POST "$API/api/admin/unlock" -H 'Content-Type: application/json' -d "{\"pin\":\"$pin\"}" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token") or "")')
+    fi
+    [ -n "$token" ] || { echo "Wrong PIN"; exit 1; }
+    json '"setup complete" if d["setupComplete"] else "Setup is not complete, so standby is off. Finish setup first."'
+    json '"standby is on" if d["screen"]["enabled"] else "standby is turned off in Settings"'
+    since=$(date '+%Y-%m-%d %H:%M:%S')
+    curl -fs -X POST "$API/api/monitor/test" -H 'Content-Type: application/json' -H "X-Dot-Admin: $token" -d '{"seconds":10}' >/dev/null
+    echo "Testing for 10 seconds (keyboard and mouse may stop if that option is on)…"
+    for i in $(seq 1 16); do
+      sleep 1
+      json "f'  {$i:2}s  main monitor: {d[\"monitor\"][\"state\"]} (via {d[\"monitor\"][\"source\"]})   standby: {d[\"monitor\"][\"standby\"]}   testing: {d[\"monitor\"][\"testing\"]}'"
+    done
+    echo; echo "Dot's log during the test:"
+    journalctl -u dotd --since "$since" --no-pager | grep -iE "monitor|usb|standby" | sed 's/^/  /'
+    ;;
+
+  ddc) ddc_test "${2:-}" ;;
+  logs) journalctl -u dotd -u dot-kiosk -f ;;
+  update) shift; curl -fsSL https://raw.githubusercontent.com/madmaxvoltro/dotos/main/install.sh | bash -s -- --update "$@" ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

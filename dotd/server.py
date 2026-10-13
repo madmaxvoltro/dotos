@@ -9,7 +9,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import audio, bluetooth, displays, games, monitor, rdp, system
+from . import audio, bluetooth, cert, displays, games, monitor, rdp, system
 from .config import Config, account_for
 
 def _version():
@@ -21,6 +21,7 @@ def _version():
 
 
 VERSION = _version()
+RECONNECT_WINDOW = 15 * 60  # seconds the password stays in memory after a dropped connection
 ADMIN_TTL = 600  # seconds a settings unlock stays valid without use
 
 
@@ -38,6 +39,7 @@ class Dot:
         # the Windows password of whoever is signed in, kept in memory only (never on disk) so Dot can
         # reconnect after game mode; wiped at sign-out, standby, shutdown and whenever dotd restarts
         self.secret = None
+        self.certs = {}  # server id -> fingerprint approved for this run only ("connect anyway" without remembering)
         self.connecting = None  # {"profileId", "serverId"} while signing in
         self.last_end = None
         self.admin_tokens = {}
@@ -52,6 +54,11 @@ class Dot:
     def _watch(self):
         """Refresh network, Tailscale and server reachability in the background."""
         while True:
+            if self.secret and self.secret.get("lostAt"):
+                if time.time() - self.secret["lostAt"] > RECONNECT_WINDOW:
+                    self.forget_secret()  # too long ago: back to asking for the password
+                elif self.network["connected"]:
+                    self.reconnect_after_drop()
             self.network = system.network_status()
             self.tailscale = system.tailscale_status()
             for s in self.cfg.get()["servers"]:
@@ -115,11 +122,33 @@ class Dot:
             "session": session,
             "connecting": self.connecting,
             "lastEnd": self.last_end,
+            "canReconnect": bool(self.secret and self.secret.get("lostAt") and not self.session),
         }
 
     # sign in -------------------------------------------------------------------
 
-    def login(self, profile_id, server_id, password, game=False):
+    def cert_decision(self, server, accept=None, remember=False):
+        """(fingerprint to pin, None) when Dot may connect, or (None, prompt) when the user has to decide.
+        accept: the fingerprint the user just approved in the warning."""
+        c = cert.fetch(server["host"], server.get("port") or 3389)
+        if "error" in c:
+            return None, None  # can't look (e.g. plain RDP without TLS): FreeRDP's own checks apply
+        fp = c["fingerprint"]
+        remembered = server.get("certFingerprint")
+        if accept and accept == fp:
+            if remember:
+                sid = server["id"]
+                self.cfg.mutate(lambda d: [s.update(certFingerprint=fp) for s in d["servers"] if s["id"] == sid])
+            else:
+                self.certs[server["id"]] = fp
+            return fp, None
+        if fp == remembered or fp == self.certs.get(server["id"]):
+            return fp, None
+        if c["trusted"] and not remembered:
+            return fp, None  # a certificate from a trusted authority, for this name: nothing to ask
+        return None, {**c, "changed": bool(remembered and remembered != fp), "server": server["name"]}
+
+    def login(self, profile_id, server_id, password, game=False, accept_cert=None, remember_cert=False):
         """Check the password, then start the session (or game mode). Tries other servers if the chosen one is down."""
         profile = self.cfg.profile(profile_id)
         if not profile:
@@ -140,8 +169,12 @@ class Dot:
             for server in candidates:
                 if system.probe(server["host"], server["port"]) is None:
                     continue
+                fingerprint, prompt = self.cert_decision(server, accept_cert, remember_cert)
+                if prompt:  # ask before any password goes to a server Dot can't vouch for
+                    return {"ok": False, "error": "cert", "cert": prompt, "serverId": server["id"]}
                 self.connecting = {"profileId": profile_id, "serverId": server["id"]}
-                result = rdp.check_password(self.client, server, account_for(profile, server), password, cfg)
+                result = rdp.check_password(self.client, server, account_for(profile, server), password, cfg,
+                                            fingerprint=fingerprint)
                 if result == "server":
                     continue
                 if result != "ok":
@@ -150,26 +183,28 @@ class Dot:
                 self.cfg.mutate(lambda d: d.update(lastProfile=profile_id))
                 self.last_end = None
                 self.connecting = None
-                self.secret = {"profileId": profile_id, "serverId": server["id"], "password": password}
+                self.secret = {"profileId": profile_id, "serverId": server["id"], "password": password,
+                               "fingerprint": fingerprint}
                 if game:
                     started = self.games.start(server["id"], source="login")
                     if not started["ok"]:
                         self.forget_secret()
                     return {**started, "serverId": server["id"]}
-                self._open_session(server, profile, password)
+                self._open_session(server, profile, password, fingerprint=fingerprint)
                 return {"ok": True, "serverId": server["id"], "failover": server["id"] != server_id}
             self.connecting = None
             return {"ok": False, "error": "server"}
         finally:
             self.login_lock.release()
 
-    def _open_session(self, server, profile, password, single=False):
+    def _open_session(self, server, profile, password, single=False, fingerprint=None):
         profile = account_for(profile, server)  # this server's own account, if the person has one
         outputs = self.displays.status()["outputs"]
         if not single:
             self.displays.focus_main()  # a single-screen session opens on the main monitor
         cfg = self.cfg.get()
-        self.session = rdp.Session(self.client, server, profile, password, cfg, self._ended, outputs, single=single)
+        self.session = rdp.Session(self.client, server, profile, password, cfg, self._ended, outputs, single=single,
+                                   fingerprint=fingerprint)
         if not single:
             self.displays.session_started(cfg["screen"]["mode"])
 
@@ -180,8 +215,19 @@ class Dot:
         profile = self.cfg.profile(s["profileId"]) if s else None
         if not (server and profile and self.client):
             return False
-        self._open_session(server, profile, s["password"], single=single)
+        self._open_session(server, profile, s["password"], single=single, fingerprint=s.get("fingerprint"))
+        self.last_end = None
         return True
+
+    def reconnect_after_drop(self):
+        """'Reconnect' after a lost connection: no password needed while it's still in memory."""
+        if self.session or not self.secret or (self.secret.get("lostAt") or 0) < time.time() - RECONNECT_WINDOW:
+            return False
+        server = self.cfg.server(self.secret["serverId"])
+        if not server or system.probe(server["host"], server["port"]) is None:
+            return False
+        self.secret.pop("lostAt", None)
+        return self.reconnect()
 
     def forget_secret(self):
         self.secret = None
@@ -197,7 +243,11 @@ class Dot:
         self.session = None
         if reason == "game":  # game mode took the session over; Dot brings it back afterwards
             return
-        self.forget_secret()
+        if reason == "server" and self.secret:
+            # the connection dropped: keep the password a little while so "Reconnect" needs none
+            self.secret["lostAt"] = time.time()
+        else:
+            self.forget_secret()
         self.last_end = {"reason": reason, "at": time.time(), "detail": detail if reason not in ("signed_out", "screen_off") else ""}
 
     def check_account(self, payload):
@@ -206,7 +256,11 @@ class Dot:
         if not server or not self.client:
             return "noserver" if not server else "noclient"
         profile = {"username": payload.get("username", ""), "domain": payload.get("domain", "")}
-        return rdp.check_password(self.client, server, profile, payload.get("password", ""), self.cfg.get())
+        fingerprint, prompt = self.cert_decision(server)
+        if prompt:
+            return "certcheck"  # not before the user has looked at this server's certificate
+        return rdp.check_password(self.client, server, profile, payload.get("password", ""), self.cfg.get(),
+                                  fingerprint=fingerprint)
 
 
 def make_handler(dot: Dot, ui_dir: str):
@@ -295,7 +349,10 @@ def make_handler(dot: Dot, ui_dir: str):
             # open to anyone at the device ------------------------------------
             if path == "/api/login":
                 return self.send_json(dot.login(data.get("profileId"), data.get("serverId"), data.get("password", ""),
-                                                game=bool(data.get("game"))))
+                                                game=bool(data.get("game")), accept_cert=data.get("acceptCert"),
+                                                remember_cert=bool(data.get("rememberCert"))))
+            if path == "/api/reconnect":
+                return self.send_json({"ok": dot.reconnect_after_drop()})
             if path == "/api/games/stop":
                 dot.games.stop(quit_app=bool(data.get("quit")))
                 return self.send_json({"ok": True})
@@ -304,6 +361,11 @@ def make_handler(dot: Dot, ui_dir: str):
                     dot.forget_secret()
                     system.power(data.get("action"))
                 return self.send_json({"ok": dot.session is None})
+            if path == "/api/dev/drop" and system.DEV:
+                # stands in for the network dropping mid-session
+                if dot.session:
+                    dot.session.stop("server")
+                return self.send_json({"ok": True})
             if path == "/api/dev/game" and system.DEV:
                 # stands in for Game.exe dropping a command into \\tsclient\dot
                 dot.games.command(data)
@@ -338,6 +400,11 @@ def make_handler(dot: Dot, ui_dir: str):
                     server = dot.cfg.upsert_server(data)
                     dot.reach[server["id"]] = system.probe(server["host"], server["port"])
                     return self.send_json({"ok": True, "server": server})
+                if path == "/api/servers/forget-cert":
+                    sid = data.get("id")
+                    dot.cfg.mutate(lambda d: [s.pop("certFingerprint", None) for s in d["servers"] if s["id"] == sid])
+                    dot.certs.pop(sid, None)
+                    return self.send_json({"ok": True})
                 if path == "/api/servers/delete":
                     dot.cfg.delete_server(data.get("id"))
                     return self.send_json({"ok": True})

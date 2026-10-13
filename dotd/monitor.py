@@ -62,6 +62,21 @@ class DDC:
         self.bus = bus
         self.model = model
         self.fake = fake
+        self.slow = False  # some monitors on the Pi's HDMI I2C only answer with slower timing
+
+    def _run(self, *args):
+        """ddcutil on this bus; when it fails, try once more with slower timing and keep that if it helps."""
+        base = ["ddcutil", "--bus", self.bus]
+        for slow in ([True] if self.slow else [False, True]):
+            cmd = base + (["--sleep-multiplier", "2"] if slow else []) + list(args)
+            with DDC.lock:
+                rc, out, err = system.run(cmd, timeout=10)
+            if rc == 0 and "error" not in (out + err).lower():
+                if slow and not self.slow:
+                    self.slow = True
+                    print(f"monitor: bus {self.bus} needs slower DDC timing", flush=True)
+                return rc, out
+        return rc, out
 
     @classmethod
     def detect_all(cls):
@@ -72,6 +87,8 @@ class DDC:
                 "HDMI-A-2": cls("dev2", "VG249Q", {0x10: [80, 100], 0x12: [60, 100], 0xD6: [1, None]}),
             }
         _, out, _ = system.run(["ddcutil", "detect", "--terse"], timeout=30)
+        if "I2C bus" not in out:  # nothing answered: try again, slower
+            _, out, _ = system.run(["ddcutil", "detect", "--terse", "--sleep-multiplier", "2"], timeout=45)
         found = {}
         for block in re.split(r"\n(?=Display \d+)", out):
             bus = re.search(r"I2C bus:\s+/dev/i2c-(\d+)", block)
@@ -97,8 +114,7 @@ class DDC:
         """(value, max) for continuous features, (value, None) for others, or None."""
         if self.fake is not None:
             return tuple(self.fake[code]) if code in self.fake else None
-        with DDC.lock:
-            _, out, _ = system.run(["ddcutil", "--bus", self.bus, "--brief", "getvcp", f"{code:02X}"], timeout=6)
+        _, out = self._run("--brief", "getvcp", f"{code:02X}")
         m = re.search(r"VCP [0-9A-F]{2} C (\d+) (\d+)", out, re.I)
         if m:
             return int(m.group(1)), int(m.group(2))
@@ -111,8 +127,7 @@ class DDC:
         if self.fake is not None:
             self.fake.setdefault(code, [0, 100])[0] = int(value)
             return True
-        with DDC.lock:
-            rc, _, _ = system.run(["ddcutil", "--bus", self.bus, "--noverify", "setvcp", f"{code:02X}", str(int(value))], timeout=6)
+        rc, _ = self._run("--noverify", "setvcp", f"{code:02X}", str(int(value)))
         return rc == 0
 
 

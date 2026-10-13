@@ -14,6 +14,7 @@ export const ACCOUNT_ERRORS = {
   noclient: ["info", "FreeRDP is missing", "Run the installer again to add it."],
   noserver: ["server", "No server set up", "Add a server in Settings."],
   unknown: ["info", "Couldn't sign in", "Something unexpected happened. Try again."],
+  certcheck: ["shield", "Certificate not checked yet", "Sign in once from the login screen to review this server's certificate, then check the password here."],
   off: ["gamepad", "Game mode isn't set up", "Choose how this server plays games in Settings → Games."],
   nomoonlight: ["gamepad", "Moonlight isn't installed", "Run the installer again without --no-games."],
   nohost: ["gamepad", "No gaming PC chosen", "Pick one in Settings → Games."],
@@ -186,6 +187,9 @@ export function serverForm(root, server, { onDone, onCancel, submitLabel = "Save
         <label class="grow"><span class="label">Domain (optional)</span><span class="field"><input name="domain" value="${s.domain}" placeholder="CONTOSO"></span></label></div>
         <label><span class="label">RD Gateway (optional)</span><span class="field"><input name="gateway" value="${s.gateway}" placeholder="gateway.example.com"></span></label>`
       : html`<div><button type="button" class="more" data-on-click="more">${icon("plus", 14)} Port, domain, gateway</button></div>`}
+      ${s.certFingerprint ? html`<div class="setting"><div class="grow"><div class="t">Remembered certificate</div>
+        <div class="s mono" style="font-size:11.5px">${s.certFingerprint.slice(0, 32)}…</div></div>
+        <button type="button" class="btn btn-ghost btn-sm" data-on-click="forgetCert">Forget</button></div>` : ""}
       ${people.length ? html`<div><span class="label">Who signs in here</span><div class="panel" style="padding:6px"><div class="list">
         ${people.map((p) => html`<div class="item ${p.on ? "on" : ""}" style="flex-wrap:wrap">
           <button type="button" class="switch" role="switch" aria-checked="${p.on}" data-id="${p.id}" data-on-click="who"><span class="sr">${p.name} uses this server</span></button>
@@ -204,6 +208,14 @@ export function serverForm(root, server, { onDone, onCancel, submitLabel = "Save
     bind(root, {
       dirty: () => { test = null; },
       who: (e, el) => { read(); const p = people.find((x) => x.id === el.dataset.id); p.on = !p.on; render(); },
+      forgetCert: async () => {
+        read();
+        await api("/api/servers/forget-cert", { id: s.id });
+        delete s.certFingerprint;
+        await refresh();
+        render();
+        toast("Dot will ask about this server's certificate again");
+      },
       more: () => { read(); more = true; render(); },
       cancel: () => onCancel?.(),
       test: async () => {

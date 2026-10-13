@@ -94,7 +94,17 @@ def windows_scale(screen, outputs):
     return max(100, min(500, pct))  # what Windows accepts
 
 
-def build_args(client, server, profile, password, cfg, auth_only=False, outputs=(), single=False):
+def cert_args(client, fingerprint):
+    """FreeRDP accepts exactly the certificate Dot checked (or the user approved), nothing else."""
+    if not fingerprint:
+        return ["/cert:tofu" if client["major"] >= 3 else "/cert-tofu"]
+    if client["major"] < 3:
+        return ["/cert-ignore"]  # FreeRDP 2 can't pin; Dot has just checked the certificate itself
+    colons = ":".join(fingerprint[i:i + 2] for i in range(0, len(fingerprint), 2))
+    return [f"/cert:fingerprint:sha256:{fingerprint},fingerprint:sha256:{colons}"]
+
+
+def build_args(client, server, profile, password, cfg, auth_only=False, outputs=(), single=False, fingerprint=None):
     v3 = client["major"] >= 3
     rdp, screen = cfg["rdp"], cfg["screen"]
     domain = profile.get("domain") or server.get("domain")
@@ -106,7 +116,7 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
         args += [f"/g:{server['gateway']}", "/gu:" + profile["username"], "/gp:" + password]
         if domain:
             args.append(f"/gd:{domain}")
-    args.append("/cert:tofu" if v3 else "/cert-tofu")
+    args += cert_args(client, fingerprint)
     args.append("/log-level:ERROR")
     if auth_only:
         args.append("/auth-only" if v3 else "+auth-only")
@@ -147,14 +157,14 @@ def _popen(client, args):
     return proc
 
 
-def check_password(client, server, profile, password, cfg, timeout=25):
+def check_password(client, server, profile, password, cfg, timeout=25, fingerprint=None):
     """Returns 'ok' or an error kind: wrong, expired, locked, disabled, denied, cert, server, unknown."""
     if system.DEV:
         time.sleep(1.2)
         if "off" in server["host"]:
             return "server"
         return {"dot": "ok", "expired": "expired", "locked": "locked"}.get(password, "wrong")
-    proc = _popen(client, build_args(client, server, profile, password, cfg, auth_only=True))
+    proc = _popen(client, build_args(client, server, profile, password, cfg, auth_only=True, fingerprint=fingerprint))
     try:
         out, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -166,7 +176,7 @@ def check_password(client, server, profile, password, cfg, timeout=25):
 class Session:
     """One running RDP session; calls on_end(reason) when FreeRDP exits."""
 
-    def __init__(self, client, server, profile, password, cfg, on_end, outputs=(), single=False):
+    def __init__(self, client, server, profile, password, cfg, on_end, outputs=(), single=False, fingerprint=None):
         self.server_id = server["id"]
         self.profile_id = profile["id"]
         self.started = time.time()
@@ -178,7 +188,8 @@ class Session:
             self.proc = None
             threading.Thread(target=self._dev_wait, daemon=True).start()
             return
-        self.proc = _popen(client, build_args(client, server, profile, password, cfg, outputs=outputs, single=single))
+        self.proc = _popen(client, build_args(client, server, profile, password, cfg, outputs=outputs, single=single,
+                                              fingerprint=fingerprint))
         threading.Thread(target=self._wait, daemon=True).start()
 
     def _wait(self):

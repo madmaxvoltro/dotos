@@ -1,7 +1,7 @@
 // Login: the board's screen plus a server switcher, people picker and a settings entry in the dock.
 
 import { $, api, bind, clock, html, icon, initial, latencyText, mount, notice, raw, refresh, shortDate, store, toast, watch } from "./lib.js";
-import { ACCOUNT_ERRORS, modal, setVolume, soundPanel, volumeIcon, wifiPanel } from "./parts.js";
+import { ACCOUNT_ERRORS, modal, setVolume, soundPanel, switchEl, volumeIcon, wifiPanel } from "./parts.js";
 
 export function login(root, { go }) {
   const st0 = store.state;
@@ -66,6 +66,11 @@ export function login(root, { go }) {
       $("#pw", root).focus();
     },
     openWifi: () => { ui.tray = true; ui.popover = "wifi"; renderDock(); renderPop(); },
+    reconnect: async () => {
+      const res = await api("/api/reconnect", {});
+      if (!res.ok) toast("The server isn't answering yet. Dot keeps trying.");
+      refresh();
+    },
   };
   bind(root, handlers);
 
@@ -119,7 +124,10 @@ export function login(root, { go }) {
       card = notice("monitor", "Locked while the monitor was off", "Your session is still open on the server. Sign in to carry on.");
     } else if (st.lastEnd && st.lastEnd.reason !== "signed_out" && Date.now() / 1000 - st.lastEnd.at < 600) {
       card = st.lastEnd.reason === "server"
-        ? notice("server", "Connection lost", "The session is still running on the server. Sign in to pick up where you left off.")
+        ? (st.canReconnect
+          ? notice("server", "Connection lost", "Your session is still running. Dot reconnects by itself when the server is back.",
+            '<button type="button" class="btn btn-raised btn-sm" data-on-click="reconnect">Reconnect</button>')
+          : notice("server", "Connection lost", "The session is still running on the server. Sign in to pick up where you left off."))
         : errorCard(st.lastEnd.reason);
     } else if (!profile()) card = notice("info", "No one set up", "Open Settings to add a person.");
     mount($("#notices", root), card);
@@ -213,14 +221,19 @@ export function login(root, { go }) {
 
   // actions -------------------------------------------------------------------------------------------
 
-  async function signIn() {
+  async function signIn(certAnswer = {}) {
     const pw = $("#pw", root);
     const p = profile();
     const s = server();
     if (!p || !pw.value || ui.busy) return;
     ui.busy = true; ui.error = null; ui.popover = null;
     renderBusy(); renderNotices(); renderPop();
-    const res = await api("/api/login", { profileId: p.id, serverId: s?.id, password: pw.value, game: ui.game });
+    const res = await api("/api/login", { profileId: p.id, serverId: s?.id, password: pw.value, game: ui.game, ...certAnswer });
+    if (res.error === "cert") {
+      ui.busy = false;
+      renderBusy();
+      return certWarning(res.cert);
+    }
     ui.busy = false;
     if (res.ok) {
       pw.value = "";
@@ -237,6 +250,32 @@ export function login(root, { go }) {
     }
     pw.select();
     pw.focus();
+  }
+
+  /** The server's certificate can't be verified (self-signed) or changed since last time: ask before sending the password. */
+  function certWarning(c) {
+    const changed = c.changed;
+    let remember = !changed; // a changed certificate is worth a second look next time too
+    const row = (k, v) => html`<div class="row" style="justify-content:space-between;gap:16px;padding:6px 0"><span class="small">${k}</span><span style="font-size:13px;text-align:right;word-break:break-all">${v}</span></div>`;
+    const m = modal(html`
+      <div class="row" style="gap:12px;align-items:flex-start">${icon("shield", 26)}<div class="grow">
+        <h2 class="title" style="font-size:22px">${changed ? `${c.server}'s certificate changed` : `Can't verify ${c.server}`}</h2>
+        <p class="lead" style="font-size:14px">${changed
+          ? "This server shows a different certificate than the one you approved before. That happens after reinstalling Windows or renewing the certificate, but it can also mean someone is in between. Only connect if you expected this."
+          : "Its certificate isn't from an authority Dot trusts. That's normal for Windows, which makes its own. If this is your server, it's fine to connect."}</p></div></div>
+      <div class="panel" style="background:var(--raised);margin-top:16px;padding:10px 14px">
+        ${row("Issued to", c.subject || "unknown")}${row("Issued by", c.issuer || "unknown")}${row("Expires", c.expires || "unknown")}
+        ${row("Fingerprint", html`<span class="mono" style="font-size:11px">${c.fingerprintColons.slice(0, 47)}…</span>`)}
+      </div>
+      <div class="setting" style="background:transparent;padding:14px 2px 0"><div class="grow"><div class="t">Remember my decision</div>
+        <div class="s">Don't ask again for this server while its certificate stays the same.</div></div><span id="rem"></span></div>
+      <div class="actions"><button class="btn btn-ghost" data-on-click="close">Cancel</button>
+        <button class="btn ${changed ? "btn-accent" : "btn-primary"}" data-on-click="go">Connect anyway</button></div>`,
+    {
+      go: (e, el, close) => { close(); signIn({ acceptCert: c.fingerprint, rememberCert: remember }); },
+    });
+    mount($("#rem", m.el), switchEl("remember", remember, "Remember my decision"));
+    bind($("#rem", m.el), { toggle: (e, el) => { remember = !remember; el.setAttribute("aria-checked", remember); } });
   }
 
   async function power(action) {
@@ -290,7 +329,7 @@ export function login(root, { go }) {
   $("#pw", root).focus();
   const timer = setInterval(renderDock, 1000);
   cleanups.push(() => clearInterval(timer));
-  cleanups.push(watch((st) => [st.profiles, st.servers, st.network.connected, st.lastEnd, st.features], () => { renderWho(); renderNotices(); }));
+  cleanups.push(watch((st) => [st.profiles, st.servers, st.network.connected, st.lastEnd, st.features, st.canReconnect], () => { renderWho(); renderNotices(); }));
   cleanups.push(watch((st) => [st.audio?.volume, st.audio?.muted], renderDock));
   cleanups.push(() => wifiCleanup?.());
   return () => cleanups.forEach((fn) => fn());
