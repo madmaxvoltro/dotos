@@ -425,10 +425,9 @@ export function preferencesPanel(root, { connection = true, device = true } = {}
         <div class="setting"><div class="grow"><div class="t">Clipboard</div></div>${switchEl("rdp.clipboard", rdp.clipboard, "Clipboard")}</div>
         <div class="setting"><div class="grow"><div class="t">Graphics</div><div class="s">${{
           sharp: "Crisp text for office work. Light on a Pi 4 while the screen is still; video is less smooth.",
-          light: "Smooth for video and scrolling: one video stream. Text is a little softer.",
           compatible: "The oldest mode. For when Windows stays black.",
-        }[rdp.graphics] || "Sharp and smooth, but heavy for a Pi 4 to decode."}</div></div>
-          ${seg("rdp.graphics", rdp.graphics || "auto", [["sharp", "Sharp"], ["light", "Smooth"], ["auto", "Best"], ["compatible", "Compatible"]])}</div>
+        }[rdp.graphics] || "Smooth for video, YouTube and scrolling: one video stream. Text is a little softer."}</div></div>
+          ${seg("rdp.graphics", rdp.graphics === "light" ? "auto" : rdp.graphics || "auto", [["auto", "Smooth"], ["sharp", "Sharp"], ["compatible", "Compatible"]])}</div>
         <div class="setting"><div class="grow"><div class="t">Remote Desktop client</div><div class="s">Auto uses FreeRDP's X11 client. Try SDL if Windows looks wrong or won't connect.</div></div>
           ${seg("rdp.client", rdp.client || "auto", [["auto", "Auto"], ["x11", "X11"], ["sdl", "SDL"]])}</div>
         <div class="setting"><div class="grow"><div class="t">Detailed log</div><div class="s">FreeRDP writes everything it does to Dot's log (About → Show Dot's log). For finding problems.</div></div>${switchEl("rdp.debugLog", rdp.debugLog, "Detailed log")}</div>

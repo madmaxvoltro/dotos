@@ -35,7 +35,7 @@ DEFAULTS = {
         "clipboard": True,
         "usbDrives": False,
         "client": "auto",  # auto | x11 | sdl: which FreeRDP client
-        "graphics": "auto",  # auto "Best" (AVC444) | sharp (RemoteFX) | light "Smooth" (AVC420) | compatible (no GFX)
+        "graphics": "auto",  # auto "Smooth" (AVC420; "light" means the same) | sharp (RemoteFX) | compatible (no GFX)
         "debugLog": False,  # FreeRDP's detailed log in Dot's log, for "why doesn't it connect?"
     },
     "screen": {
