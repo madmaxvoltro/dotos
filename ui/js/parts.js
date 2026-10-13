@@ -114,7 +114,9 @@ export function tailscalePanel(root) {
   function render() {
     const ts = store.state?.tailscale || {};
     let body;
-    if (!ts.installed) body = notice("info", "Tailscale isn't installed", "Run the installer with --tailscale to add it.");
+    if (ts.installing) body = html`<div class="row small"><span class="spinner"></span> Installing Tailscale. This takes about a minute.</div>`;
+    else if (!ts.installed) body = html`${notice("info", "Tailscale isn't installed yet", "Dot can install it now. It needs an internet connection.")}
+      <div style="margin-top:12px"><button class="btn btn-raised" data-on-click="install" ${starting ? "disabled" : ""}>${starting ? raw('<span class="spinner"></span>') : ""} Install Tailscale</button></div>`;
     else if (ts.running) body = html`${notice("checkCircle", "Connected to your tailnet", `This Dot is ${ts.ip || "online"}. Servers on your tailnet are reachable by name.`, "", "ok")}
       <div style="margin-top:12px"><button class="btn btn-raised btn-sm" data-on-click="off">Turn off</button></div>`;
     else if (ts.enabled && (ts.qr || ts.loginUrl)) body = html`<div class="row" style="align-items:flex-start;gap:20px">
@@ -128,6 +130,7 @@ export function tailscalePanel(root) {
     bind(root, {
       on: async () => { starting = true; render(); await api("/api/tailscale/up", {}); starting = false; refresh(); },
       off: async () => { await api("/api/tailscale/down", {}); refresh(); },
+      install: async () => { starting = true; render(); await api("/api/tailscale/install", {}); starting = false; refresh(); },
     });
   }
   render();

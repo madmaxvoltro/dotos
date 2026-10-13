@@ -77,7 +77,8 @@ export function setup(root, { go }) {
           onDone: () => { mode = "list"; editing = null; render(); },
           onCancel: servers.length ? () => { mode = "list"; editing = null; render(); } : null,
         });
-        actions("", {});
+        // e.g. the server is only reachable once Tailscale is set up: add it later in Settings
+        actions(servers.length ? "" : html`<button class="btn btn-ghost" data-on-click="skip">Skip for now</button>`, { skip: () => goto(step + 1) });
       } else {
         head("Servers", "People pick one of these when they sign in. You can add more later in Settings.");
         mount(content, html`<div id="list"></div><button class="more" style="margin-top:12px" data-on-click="add">${icon("plus", 14)} Add another server</button>`);
@@ -97,7 +98,7 @@ export function setup(root, { go }) {
           onDone: () => { mode = "list"; editing = null; render(); },
           onCancel: profiles.length ? () => { mode = "list"; editing = null; render(); } : null,
         });
-        actions("", {});
+        actions(profiles.length ? "" : html`<button class="btn btn-ghost" data-on-click="skip">Skip for now</button>`, { skip: () => goto(step + 1) });
       } else {
         head("People", "Everyone who signs in on this Dot.");
         mount(content, html`<div id="list"></div><button class="more" style="margin-top:12px" data-on-click="add">${icon("plus", 14)} Add someone else</button>`);
@@ -119,8 +120,8 @@ export function setup(root, { go }) {
       const { profiles, servers } = store.state;
       head("Dot is ready", "Here's what you set up.");
       mount(content, html`<div class="card-list">
-        <div class="card">${icon("users", 20)}<div class="grow"><div class="t">${profiles.map((p) => p.name).join(", ")}</div><div class="s">${profiles.length === 1 ? "1 person" : `${profiles.length} people`}</div></div></div>
-        <div class="card">${icon("server", 20)}<div class="grow"><div class="t">${servers.map((s) => s.name).join(", ")}</div><div class="s">${servers.length === 1 ? "1 server" : `${servers.length} servers`}</div></div></div>
+        <div class="card">${icon("users", 20)}<div class="grow"><div class="t">${profiles.length ? profiles.map((p) => p.name).join(", ") : "Nobody yet"}</div><div class="s">${profiles.length ? (profiles.length === 1 ? "1 person" : `${profiles.length} people`) : "Add people in Settings → People"}</div></div></div>
+        <div class="card">${icon("server", 20)}<div class="grow"><div class="t">${servers.length ? servers.map((s) => s.name).join(", ") : "No server yet"}</div><div class="s">${servers.length ? (servers.length === 1 ? "1 server" : `${servers.length} servers`) : "Add one in Settings → Servers"}</div></div></div>
         <div class="card">${icon(store.state.network.connected ? "wifi" : "wifiOff", 20)}<div class="grow"><div class="t">${store.state.network.connected ? store.state.network.name : "Not connected"}</div><div class="s">${store.state.tailscale.running ? "Tailscale on" : "Local network"}</div></div></div>
       </div>`);
       actions(html`<button class="btn btn-primary" data-on-click="finish">Start using Dot</button>`, {

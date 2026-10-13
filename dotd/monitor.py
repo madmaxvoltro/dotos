@@ -374,7 +374,14 @@ class Monitor:
         return (d.state, d.source, d.explicit) if d else ("unknown", None, True)
 
     def _react(self):
-        settings = self.cfg.get()["screen"]
+        cfg = self.cfg.get()
+        settings = cfg["screen"]
+        if not cfg["setupComplete"]:
+            # never unplug anything (keyboard and mouse included) before setup is done
+            self.off_since = None
+            if self.snapshot:
+                self.leave_standby()
+            return
         state, _, _ = self._main_state()
         if state == "off":
             self.off_since = self.off_since or time.time()

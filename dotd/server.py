@@ -52,8 +52,7 @@ class Dot:
         """Refresh network, Tailscale and server reachability in the background."""
         while True:
             self.network = system.network_status()
-            if self.cfg.get()["tailscale"]["enabled"]:
-                self.tailscale = system.tailscale_status()
+            self.tailscale = system.tailscale_status()
             for s in self.cfg.get()["servers"]:
                 self.reach[s["id"]] = system.probe(s["host"], s["port"]) if self.network["connected"] else None
             time.sleep(4 if self.session is None else 15)
@@ -356,6 +355,10 @@ def make_handler(dot: Dot, ui_dir: str):
                     return self.send_json({"ok": True})
                 if path == "/api/pin":
                     dot.cfg.set_pin(data.get("pin") or None)
+                    return self.send_json({"ok": True})
+                if path == "/api/tailscale/install":
+                    system.tailscale_install()
+                    dot.tailscale = system.tailscale_status()
                     return self.send_json({"ok": True})
                 if path == "/api/tailscale/up":
                     dot.cfg.patch_settings({"tailscale": {"enabled": True}})

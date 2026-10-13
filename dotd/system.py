@@ -138,11 +138,35 @@ _ts_login = {"proc": None, "qr": "", "url": ""}
 _ts_lock = threading.Lock()
 
 
+_dev_ts = {"installed": False, "installing_until": 0}
+
+
+def tailscale_installing():
+    if DEV:
+        return time.time() < _dev_ts["installing_until"]
+    _, out, _ = run(["systemctl", "is-active", "dot-tailscale-install"], timeout=4)
+    return out.strip() in ("active", "activating")
+
+
+def tailscale_install():
+    """Tailscale's own installer, in its own unit so it survives a dotd restart. Needs internet."""
+    if DEV:
+        _dev_ts["installing_until"] = time.time() + 4
+        _dev_ts["installed"] = True
+        return
+    if tailscale_installing():
+        return
+    run(["systemd-run", "--unit", "dot-tailscale-install", "--collect",
+         "sh", "-c", "curl -fsSL https://tailscale.com/install.sh | sh"], timeout=10)
+
+
 def tailscale_status():
     if DEV:
-        return {"installed": True, "running": False, "ip": None, "loginUrl": _ts_login["url"], "qr": _ts_login["qr"]}
+        installing = tailscale_installing()
+        return {"installed": _dev_ts["installed"] and not installing, "installing": installing, "running": False,
+                "ip": None, "loginUrl": _ts_login["url"], "qr": _ts_login["qr"]}
     if not shutil.which("tailscale"):
-        return {"installed": False, "running": False, "ip": None, "loginUrl": "", "qr": ""}
+        return {"installed": False, "installing": tailscale_installing(), "running": False, "ip": None, "loginUrl": "", "qr": ""}
     code, out, _ = run(["tailscale", "status", "--json"], timeout=5)
     try:
         data = json.loads(out) if out else {}
@@ -152,6 +176,7 @@ def tailscale_status():
     ips = (data.get("Self") or {}).get("TailscaleIPs") or []
     return {
         "installed": True,
+        "installing": False,
         "running": running,
         "ip": next((i for i in ips if "." in i), None),
         "loginUrl": "" if running else _ts_login["url"],
