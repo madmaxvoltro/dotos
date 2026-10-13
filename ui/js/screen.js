@@ -182,7 +182,7 @@ export function screenPanel(root) {
         <div class="s">${!info ? "Asking the monitor…" : channels.length ? `Controlled over ${channels.join(" and ")}` : "No DDC/CI. Turn it on in the monitor's own menu to control brightness from Dot."}</div></div>
         ${o.id === mainId ? html`<span class="small">Main monitor</span>` : html`<button class="btn btn-raised btn-sm" data-on-click="makeMain">Make main</button>`}</div>
       ${o.customModes ? html`<div class="notice">${icon("info", 22)}<div class="grow"><div class="t">This monitor didn't share its resolutions</div>
-        <div class="s">The Pi couldn't read its EDID, so it only offers safe modes. Pick the monitor's real resolution: the ones marked custom are applied anyway. If the picture goes black, it switches back after 15 seconds.</div></div></div>` : ""}
+        <div class="s">${o.detectedMode ? "Linux didn't get its resolutions at startup, so Dot read them from the monitor over the cable and uses the one marked detected. You can pick another below." : "The Pi couldn't read its EDID, so it only offers safe modes. Pick the monitor's real resolution: the ones marked custom are applied anyway."} If the picture goes black, it switches back after 15 seconds.</div></div></div>` : ""}
       <div class="group">
         <div class="setting"><div class="grow"><div class="t">Resolution</div></div>
           <label class="field" style="height:36px;background:var(--raised);min-width:230px"><span class="sr">Resolution of ${o.label}</span>

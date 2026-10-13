@@ -328,6 +328,13 @@ systemd-tmpfiles --create /etc/tmpfiles.d/dot.conf
 [ -f /var/lib/dot/sway-outputs.conf ] || : > /var/lib/dot/sway-outputs.conf
 [ -f /etc/dot/kiosk.env ] || printf 'XKB_DEFAULT_LAYOUT=us\nDOT_SCALE=1.00\n' > /etc/dot/kiosk.env
 
+# Dot's screen is a local page in Chromium: no password manager, autofill, translate or sign-in prompts
+for dir in /etc/chromium/policies/managed /etc/chromium-browser/policies/managed; do
+  install -D -m 644 "$PREFIX/system/chromium-policy.json" "$dir/dot.json"
+done
+# and forget anything an earlier version let Chromium save
+rm -f /var/lib/dot/chromium*/Default/"Login Data"* /var/lib/dot/chromium*/Default/"Web Data"* 2>/dev/null || true
+
 install -m 644 "$PREFIX/system/pam-dot-kiosk" /etc/pam.d/dot-kiosk
 install -m 644 "$PREFIX/system/dotd.service" /etc/systemd/system/dotd.service
 install -m 644 "$PREFIX/system/dot-kiosk.service" /etc/systemd/system/dot-kiosk.service

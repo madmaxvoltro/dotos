@@ -6,7 +6,7 @@ set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "Run as root" >&2; exit 1; }
 
 systemctl disable --now -q dot-kiosk.service dotd.service 2>/dev/null || true
-rm -f /etc/systemd/system/dot-kiosk.service /etc/systemd/system/dotd.service /etc/pam.d/dot-kiosk /etc/udev/rules.d/99-dot-usb.rules /etc/modules-load.d/dot.conf /etc/tmpfiles.d/dot.conf
+rm -f /etc/systemd/system/dot-kiosk.service /etc/systemd/system/dotd.service /etc/pam.d/dot-kiosk /etc/udev/rules.d/99-dot-usb.rules /etc/modules-load.d/dot.conf /etc/tmpfiles.d/dot.conf /etc/chromium/policies/managed/dot.json /etc/chromium-browser/policies/managed/dot.json
 systemctl daemon-reload
 systemctl enable -q getty@tty1.service
 systemctl set-default -q multi-user.target

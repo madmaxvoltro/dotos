@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import audio, bluetooth, displays, games, monitor, rdp, system
-from .config import Config
+from .config import Config, account_for
 
 def _version():
     try:
@@ -141,7 +141,7 @@ class Dot:
                 if system.probe(server["host"], server["port"]) is None:
                     continue
                 self.connecting = {"profileId": profile_id, "serverId": server["id"]}
-                result = rdp.check_password(self.client, server, profile, password, cfg)
+                result = rdp.check_password(self.client, server, account_for(profile, server), password, cfg)
                 if result == "server":
                     continue
                 if result != "ok":
@@ -164,6 +164,7 @@ class Dot:
             self.login_lock.release()
 
     def _open_session(self, server, profile, password, single=False):
+        profile = account_for(profile, server)  # this server's own account, if the person has one
         outputs = self.displays.status()["outputs"]
         if not single:
             self.displays.focus_main()  # a single-screen session opens on the main monitor

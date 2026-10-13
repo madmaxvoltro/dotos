@@ -18,7 +18,9 @@
   --mono: "Geist Mono", ui-monospace, monospace;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; scrollbar-width: none; }
+*::-webkit-scrollbar { display: none; } /* an appliance, not a browser: scroll by wheel, touch or keys */
+html, body { overscroll-behavior: none; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; -webkit-font-smoothing: antialiased; }
 body { cursor: default; user-select: none; }
 button, input, select { font: inherit; color: inherit; }
@@ -218,7 +220,7 @@ button.item:hover, .item.on { background: var(--raised); }
 .settings nav button:hover { background: var(--surface); color: var(--text); }
 .settings nav button[aria-current="page"] { background: var(--surface); color: var(--text); font-weight: 500; }
 .settings nav .spacer { flex: 1; }
-.settings main { flex: 1; overflow-y: auto; padding: 40px 56px 64px; scrollbar-width: thin; }
+.settings main { flex: 1; overflow-y: auto; padding: 40px 56px 64px; }
 .settings main .inner { max-width: 560px; }
 .settings main .head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 24px; gap: 16px; }
 

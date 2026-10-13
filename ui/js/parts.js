@@ -218,7 +218,7 @@ export function profileList(root, { onEdit } = {}) {
     mount(root, profiles.length ? html`<div class="card-list">${profiles.map((p) => html`
       <div class="card">
         <div class="avatar" style="width:40px;height:40px;font-size:17px;background:${p.color}">${initial(p.name)}</div>
-        <div class="grow"><div class="t">${p.name}</div><div class="s">${p.domain ? `${p.domain}\\` : ""}${p.username} · ${name(p.defaultServer)}${p.servers.length > 1 ? ` +${p.servers.length - 1}` : ""}</div></div>
+        <div class="grow"><div class="t">${p.name}</div><div class="s">${p.domain ? `${p.domain}\\` : ""}${p.username} · ${name(p.defaultServer)}${p.servers.length > 1 ? ` +${p.servers.length - 1}` : ""}${Object.keys(p.accounts || {}).length ? " · own accounts on some servers" : ""}</div></div>
         <button class="icon-btn" aria-label="Edit ${p.name}" data-id="${p.id}" data-on-click="edit">${icon("pencil", 16)}</button>
         <button class="icon-btn" aria-label="Remove ${p.name}" data-id="${p.id}" data-on-click="del">${icon("trash", 16)}</button>
       </div>`)}</div>` : html`<div class="small" style="padding:4px">Nobody yet.</div>`);
@@ -237,22 +237,37 @@ export function profileList(root, { onEdit } = {}) {
 export function profileForm(root, profile, { onDone, onCancel, submitLabel = "Save" } = {}) {
   const servers = store.state?.servers || [];
   const p = { name: "", username: "", domain: "", servers: servers.map((s) => s.id), defaultServer: servers[0]?.id, ...profile };
+  p.accounts = { ...(profile?.accounts || {}) }; // server id -> {username, domain} when it differs
+  const editingAcct = new Set(Object.keys(p.accounts));
   let check = null; // null | "busy" | result string
+  const who = (sid) => {
+    const a = p.accounts[sid]?.username ? p.accounts[sid] : p;
+    return a.username ? `${a.domain ? `${a.domain}\\` : ""}${a.username}` : "your Windows user name";
+  };
 
   function render() {
     const domainHint = servers.find((s) => s.id === p.defaultServer)?.domain || "Optional";
     mount(root, html`<form class="stack" data-on-submit="save" autocomplete="off">
       <label><span class="label">Name on this Dot</span><span class="field"><input name="name" value="${p.name}" placeholder="Maxime"></span></label>
       <div class="row">
-        <label class="grow"><span class="label">Windows user name</span><span class="field"><input name="username" value="${p.username}" placeholder="maxime" required autocapitalize="off" spellcheck="false"></span></label>
+        <label class="grow"><span class="label">${servers.length > 1 ? "Windows user name (unless a server has its own)" : "Windows user name"}</span><span class="field"><input name="username" value="${p.username}" placeholder="maxime" required autocapitalize="off" spellcheck="false"></span></label>
         <label style="width:150px"><span class="label">Domain</span><span class="field"><input name="domain" value="${p.domain}" placeholder="${domainHint}" spellcheck="false"></span></label>
       </div>
       ${servers.length > 1 ? html`<div><span class="label">Servers this person can use</span><div class="panel" style="padding:6px"><div class="list">
-        ${servers.map((s) => html`<div class="item ${p.servers.includes(s.id) ? "on" : ""}">
-          <button type="button" class="switch" role="switch" aria-checked="${p.servers.includes(s.id)}" data-id="${s.id}" data-on-click="toggleServer"><span class="sr">Use ${s.name}</span></button>
-          <div class="grow"><div class="t">${s.name}</div><div class="s">${s.host}</div></div>
-          ${p.servers.includes(s.id) ? html`<button type="button" class="btn btn-sm ${p.defaultServer === s.id ? "btn-raised" : "btn-ghost"}" data-id="${s.id}" data-on-click="makeDefault" aria-pressed="${p.defaultServer === s.id}">${p.defaultServer === s.id ? "Default" : "Make default"}</button>` : ""}
-        </div>`)}
+        ${servers.map((s) => {
+          const on = p.servers.includes(s.id);
+          const own = editingAcct.has(s.id);
+          return html`<div class="item ${on ? "on" : ""}" style="flex-wrap:wrap">
+          <button type="button" class="switch" role="switch" aria-checked="${on}" data-id="${s.id}" data-on-click="toggleServer"><span class="sr">Use ${s.name}</span></button>
+          <div class="grow"><div class="t">${s.name}</div><div class="s">${on ? `Signs in as ${who(s.id)}` : s.host}</div></div>
+          ${on ? html`<button type="button" class="btn btn-ghost btn-sm" data-id="${s.id}" data-on-click="ownAccount">${own ? "Same as above" : "Different account"}</button>
+            <button type="button" class="btn btn-sm ${p.defaultServer === s.id ? "btn-raised" : "btn-ghost"}" data-id="${s.id}" data-on-click="makeDefault" aria-pressed="${p.defaultServer === s.id}">${p.defaultServer === s.id ? "Default" : "Make default"}</button>` : ""}
+          ${on && own ? html`<div class="row" style="width:100%;padding:8px 0 4px 58px">
+            <label class="grow"><span class="sr">User name on ${s.name}</span><span class="field" style="height:40px;background:var(--raised)"><input name="acct-user-${s.id}" value="${p.accounts[s.id]?.username || ""}" placeholder="User name on ${s.name}" autocapitalize="off" spellcheck="false"></span></label>
+            <label style="width:130px"><span class="sr">Domain on ${s.name}</span><span class="field" style="height:40px;background:var(--raised)"><input name="acct-domain-${s.id}" value="${p.accounts[s.id]?.domain || ""}" placeholder="${s.domain || "Domain"}" spellcheck="false"></span></label>
+          </div>` : ""}
+        </div>`;
+        })}
       </div></div></div>` : ""}
       <div><span class="label">Check the password (optional, never saved)</span>
         <span class="field"><input name="pw" type="password" placeholder="Windows password">
@@ -273,12 +288,20 @@ export function profileForm(root, profile, { onDone, onCancel, submitLabel = "Sa
         render();
       },
       makeDefault: (e, el) => { read(); p.defaultServer = el.dataset.id; render(); },
+      ownAccount: (e, el) => {
+        read();
+        const id = el.dataset.id;
+        if (editingAcct.has(id)) { editingAcct.delete(id); delete p.accounts[id]; } else editingAcct.add(id);
+        render();
+        $(`input[name="acct-user-${id}"]`, root)?.focus();
+      },
       check: async () => {
         read();
         const pw = $("form", root).pw.value;
         if (!p.username || !pw) return toast("Fill in the user name and password first");
         check = "busy"; render();
-        const res = await api("/api/account/check", { serverId: p.defaultServer, username: p.username, domain: p.domain, password: pw });
+        const a = p.accounts[p.defaultServer]?.username ? p.accounts[p.defaultServer] : p;
+        const res = await api("/api/account/check", { serverId: p.defaultServer, username: a.username, domain: a.domain, password: pw });
         check = res.result || "unknown"; render();
       },
       save: async (e) => {
@@ -294,6 +317,10 @@ export function profileForm(root, profile, { onDone, onCancel, submitLabel = "Sa
   function read() {
     const f = $("form", root);
     p.name = f.name.value.trim(); p.username = f.username.value.trim(); p.domain = f.domain.value.trim();
+    for (const id of editingAcct) {
+      const u = f[`acct-user-${id}`], d = f[`acct-domain-${id}`];
+      if (u) p.accounts[id] = { username: u.value.trim(), domain: d ? d.value.trim() : "" };
+    }
   }
   render();
   setTimeout(() => $("input", root)?.focus(), 30);

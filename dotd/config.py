@@ -69,7 +69,16 @@ DEFAULTS = {
 
 SERVER_FIELDS = {"name", "host", "port", "domain", "gateway", "games"}
 GAME_FLOWS = ("off", "same", "other", "server")
-PROFILE_FIELDS = {"name", "username", "domain", "servers", "defaultServer", "color"}
+PROFILE_FIELDS = {"name", "username", "domain", "servers", "defaultServer", "color", "accounts"}
+
+
+def account_for(profile, server):
+    """The Windows account a person uses on one server: their own user name and domain, unless that
+    server has its own (profile["accounts"][server id]). Dot shows the same person either way."""
+    acct = (profile.get("accounts") or {}).get(server["id"] if server else None) or {}
+    return {**profile,
+            "username": acct.get("username") or profile.get("username", ""),
+            "domain": acct.get("domain") if acct.get("username") else profile.get("domain", "")}
 PROFILE_COLORS = ["#2c2c2e", "#3a2a5c", "#1f3d5a", "#1f4a3a", "#5a3a1f", "#5a1f33"]
 
 
@@ -202,6 +211,13 @@ class Config:
             clean["servers"] = servers
             if clean.get("defaultServer") not in servers:
                 clean["defaultServer"] = servers[0] if servers else None
+            if "accounts" in clean:
+                accounts = clean["accounts"] if isinstance(clean["accounts"], dict) else {}
+                clean["accounts"] = {
+                    sid: {"username": str(a.get("username", "")).strip(), "domain": str(a.get("domain", "")).strip()}
+                    for sid, a in accounts.items()
+                    if sid in known and isinstance(a, dict) and str(a.get("username", "")).strip()
+                }
             pid = payload.get("id")
             existing = next((p for p in d["profiles"] if p["id"] == pid), None)
             if existing:

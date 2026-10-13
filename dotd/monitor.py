@@ -18,7 +18,7 @@ import struct
 import threading
 import time
 
-from . import system
+from . import edid, system
 
 try:
     import pwd
@@ -84,6 +84,13 @@ class DDC:
                 parts = [p.strip() for p in mon.group(1).split(":")]
                 model = parts[1] if len(parts) > 1 and parts[1] else parts[0]
             found[conn.group(1) if conn else f"i2c-{bus.group(1)}"] = cls(bus.group(1), model)
+        # some ddcutil versions don't name the HDMI port: map those through the kernel's port -> I2C link
+        for key in [k for k in found if k.startswith("i2c-")]:
+            for path in glob.glob("/sys/class/drm/card*-HDMI-A-*"):
+                connector = os.path.basename(path).split("-", 1)[1]
+                if edid.i2c_bus(connector) == key[4:] and connector not in found:
+                    found[connector] = found.pop(key)
+                    break
         return found
 
     def get(self, code):

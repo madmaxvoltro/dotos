@@ -12,7 +12,7 @@ import os
 import threading
 import time
 
-from . import kiosk, system
+from . import edid, kiosk, system
 
 DEV = system.DEV
 OUTPUTS_CONF = os.environ.get("DOT_SWAY_OUTPUTS", "/var/lib/dot/sway-outputs.conf")
@@ -55,23 +55,7 @@ def physical_size(connector):
     """(width_mm, height_mm) from the monitor's EDID, or None. Resolution says nothing about size."""
     if DEV:
         return DEV_PHYSICAL.get(connector)
-    for path in glob.glob(f"/sys/class/drm/card*-{connector}/edid"):
-        try:
-            with open(path, "rb") as f:
-                edid = f.read()
-        except OSError:
-            continue
-        if len(edid) < 128:
-            continue
-        # the first detailed timing descriptor has millimetres; bytes 21-22 only centimetres
-        d = edid[54:72]
-        w = d[12] | ((d[14] & 0xF0) << 4)
-        h = d[13] | ((d[14] & 0x0F) << 8)
-        if w > 50 and h > 50:
-            return w, h
-        if edid[21] and edid[22]:
-            return edid[21] * 10, edid[22] * 10
-    return None
+    return edid.physical_mm(edid.read(connector))
 
 
 def auto_scale(px_w, px_h, mm):
@@ -122,6 +106,7 @@ class Displays:
         self._last_shape = None
         self._dev_outputs = [dict(o) for o in DEV_OUTPUTS]
         self.trial = None  # {"until", "previous": screen config}: a custom mode waiting to be kept
+        self._dev_detected = {}  # dev mode: a monitor "without EDID" and what it would report over I2C
         threading.Thread(target=self._watch, daemon=True).start()
 
     # reading ------------------------------------------------------------------------------------
@@ -139,13 +124,19 @@ class Displays:
             modes = sorted({mode_str(m): m for m in o.get("modes", [])}.values(), key=lambda m: (-m["width"] * m["height"], -m["refresh"]))
             mm = physical_size(o["name"])
             choices = [{"value": mode_str(m), "label": f"{m['width']} × {m['height']} · {round(m['refresh'] / 1000)} Hz"} for m in modes]
-            edid = edid_present(o["name"])
+            has_edid = edid_present(o["name"])
             biggest = max((m["width"] * m["height"] for m in modes), default=0)
-            needs_custom = not edid or biggest <= 1024 * 768
+            needs_custom = not has_edid or biggest <= 1024 * 768
+            detected = None
             if needs_custom:
                 known = {(m["width"], m["height"], round(m["refresh"] / 1000)) for m in modes}
+                # the monitor's own preferred mode, read over the cable when the kernel has no EDID
+                pref = edid.preferred_mode(edid.from_monitor(o["name"])) if not DEV else self._dev_detected.get(o["name"])
+                if pref and pref not in known:
+                    detected = f"custom:{pref[0]}x{pref[1]}@{pref[2]:.3f}Hz"
+                    choices.append({"value": detected, "label": f"{pref[0]} × {pref[1]} · {pref[2]} Hz (detected)"})
                 choices += [{"value": f"custom:{w}x{h}@{r:.3f}Hz", "label": f"{w} × {h} · {r} Hz (custom)"}
-                            for w, h, r in CUSTOM_MODES if (w, h, r) not in known]
+                            for w, h, r in CUSTOM_MODES if (w, h, r) not in known and (w, h, r) != pref]
             current = mode_str(cm) if cm else None
             if current and current not in [c["value"] for c in choices]:
                 # a custom mode is running: match it by resolution (sway's timings round the refresh rate)
@@ -170,8 +161,9 @@ class Displays:
                 "transform": o.get("transform", "normal"),
                 "mode": current,
                 "modes": choices,
-                "edid": edid,
+                "edid": has_edid,
                 "customModes": needs_custom,
+                "detectedMode": detected,
             })
         return outs
 
@@ -195,12 +187,15 @@ class Displays:
         placed, right = {}, 0
         for o in outs:
             saved = layout.get(o["id"])
+            if saved and not saved.get("mode") and o.get("detectedMode"):
+                saved = {**saved, "mode": o["detectedMode"]}
             if saved:
                 placed[o["id"]] = saved
                 right = max(right, saved["x"] + o["width"])
         for o in outs:
             if o["id"] not in placed:
-                placed[o["id"]] = {"x": right, "y": 0, "mode": None, "transform": "normal", "scale": "auto"}
+                # no EDID from the kernel: start at the mode the monitor itself reported, if we got one
+                placed[o["id"]] = {"x": right, "y": 0, "mode": o.get("detectedMode"), "transform": "normal", "scale": "auto"}
                 right += o["width"]
         return placed
 
@@ -405,12 +400,28 @@ class Displays:
 
     # watching ---------------------------------------------------------------------------------------
 
+    def _reprobe_missing(self):
+        """Monitors that were off or slow at boot: ask the kernel to read their EDID again."""
+        for path in glob.glob("/sys/class/drm/card*-HDMI-A-*/status"):
+            connector = os.path.basename(os.path.dirname(path)).split("-", 1)[1]
+            try:
+                connected = open(path).read().strip() == "connected"
+            except OSError:
+                continue
+            if connected and not edid_present(connector):
+                edid.reprobe(connector)
+
     def _watch(self):
+        if not DEV:
+            self._reprobe_missing()
+            time.sleep(1)
         while True:
             try:
                 outs = self.read()
                 shape = [(o["id"], o["active"]) for o in outs]
                 if shape != self._last_shape:
+                    if not DEV and self._last_shape is not None:
+                        self._reprobe_missing()
                     self._last_shape = shape
                     self.apply()  # a monitor came or went
                 else:
