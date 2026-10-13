@@ -316,6 +316,14 @@ def update_progress():
     return {**state, "log": [l for l in log if l.strip()][-14:]}
 
 
+def logs(lines=200):
+    """Dot's own log (journald), newest last, for Settings > About > Show Dot's log."""
+    if DEV:
+        return ["(dev mode: dotd's log is in the terminal it runs in)"]
+    _, out, _ = run(["journalctl", "-u", "dotd", "-u", "dot-kiosk", "-n", str(lines), "--no-pager", "-o", "short"], timeout=10)
+    return out.splitlines()
+
+
 def start_update():
     """Re-run the installer in its own transient unit so it outlives dotd's restart."""
     if DEV:

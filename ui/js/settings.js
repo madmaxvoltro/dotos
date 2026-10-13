@@ -4,7 +4,7 @@ import { $, api, bind, html, icon, mount, refresh, setAdminToken, store, toast }
 import { bluetoothPanel } from "./bluetooth.js";
 import { gamesPanel } from "./games.js";
 import { screenPanel } from "./screen.js";
-import { confirmModal, modal, pinPanel, preferencesPanel, profileForm, profileList, regionPanel, serverForm, serverList, soundPanel, tailscalePanel, wifiPanel } from "./parts.js";
+import { confirmModal, detailsModal, modal, pinPanel, preferencesPanel, profileForm, profileList, regionPanel, serverForm, serverList, soundPanel, tailscalePanel, wifiPanel } from "./parts.js";
 
 const SECTIONS = [
   ["people", "People", "users"],
@@ -135,9 +135,15 @@ export function settings(root, { go, token }) {
         <div class="row section-gap" style="flex-wrap:wrap">
           <button class="btn btn-raised" data-on-click="update">Update Dot</button>
           <button class="btn btn-raised" data-on-click="reboot">${icon("restart", 16)} Restart</button>
+          <button class="btn btn-raised" data-on-click="logs">Show Dot's log</button>
           <button class="btn btn-ghost btn-danger" data-on-click="reset">Run setup again</button>
         </div>`);
         bind(body, {
+          logs: async () => {
+            const res = await api("/api/logs");
+            const last = res.lastError ? `Last sign-in problem (${res.lastError.server}, ${res.lastError.error}):\n${res.lastError.details || "no details"}\n\n` : "";
+            detailsModal("Dot's log", last + (res.lines || []).slice(-120).join("\n"));
+          },
           update: () => confirmModal("Update Dot?", "Dot downloads the latest version and restarts its screen. Your settings are kept. It takes a minute or two.", "Update", async () => {
             await api("/api/system/update", {});
             updateProgress();

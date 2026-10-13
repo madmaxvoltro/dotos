@@ -1,7 +1,7 @@
 // Login: the board's screen plus a server switcher, people picker and a settings entry in the dock.
 
 import { $, api, bind, clock, html, icon, initial, latencyText, mount, notice, raw, refresh, shortDate, store, toast, watch } from "./lib.js";
-import { ACCOUNT_ERRORS, modal, setVolume, soundPanel, switchEl, volumeIcon, wifiPanel } from "./parts.js";
+import { ACCOUNT_ERRORS, detailsModal, modal, setVolume, soundPanel, switchEl, volumeIcon, wifiPanel } from "./parts.js";
 
 export function login(root, { go }) {
   const st0 = store.state;
@@ -33,6 +33,7 @@ export function login(root, { go }) {
         <input id="pw" type="password" placeholder="Password" spellcheck="false">
         <button class="go" id="go" aria-label="Sign in">${icon("arrow", 16, 2.4)}</button>
       </form>
+      <div class="small" id="step" aria-live="polite" style="min-height:18px;margin-top:-6px"></div>
       <div id="notices" style="width:100%;display:flex;flex-direction:column;gap:8px"></div>
       <div class="links" id="links"></div>
     </div>
@@ -66,6 +67,11 @@ export function login(root, { go }) {
       $("#pw", root).focus();
     },
     openWifi: () => { ui.tray = true; ui.popover = "wifi"; renderDock(); renderPop(); },
+    details: () => {
+      const d = ui.error?.details || store.state.lastEnd?.detail;
+      const [, title] = ACCOUNT_ERRORS[ui.error?.kind || store.state.lastEnd?.reason] || ACCOUNT_ERRORS.unknown;
+      detailsModal(title, d);
+    },
     reconnect: async () => {
       const res = await api("/api/reconnect", {});
       if (!res.ok) toast("The server isn't answering yet. Dot keeps trying.");
@@ -113,11 +119,11 @@ export function login(root, { go }) {
       mount($("#notices", root), card);
       return;
     }
-    const errorCard = (kind) => {
+    const errorCard = (kind, details) => {
       const [ic, t, sub] = ACCOUNT_ERRORS[kind] || ACCOUNT_ERRORS.unknown;
-      return notice(ic, t, sub);
+      return notice(ic, t, sub, details ? '<button type="button" class="btn btn-ghost btn-sm" data-on-click="details">Details</button>' : "");
     };
-    if (ui.error) card = errorCard(ui.error.kind);
+    if (ui.error) card = errorCard(ui.error.kind, ui.error.details);
     else if (!st.network.connected) card = notice("wifiOff", "No internet", "Check the cable or choose a network.", '<button type="button" class="btn btn-raised btn-sm" data-on-click="openWifi">Wi-Fi</button>');
     else if (s && s.latency == null) card = notice("server", `Can't reach ${s.name}`, "The network works. Check that the server is on.");
     else if (st.lastEnd?.reason === "screen_off" && Date.now() / 1000 - st.lastEnd.at < 4 * 3600) {
@@ -128,13 +134,19 @@ export function login(root, { go }) {
           ? notice("server", "Connection lost", "Your session is still running. Dot reconnects by itself when the server is back.",
             '<button type="button" class="btn btn-raised btn-sm" data-on-click="reconnect">Reconnect</button>')
           : notice("server", "Connection lost", "The session is still running on the server. Sign in to pick up where you left off."))
-        : errorCard(st.lastEnd.reason);
+        : errorCard(st.lastEnd.reason, st.lastEnd.detail);
     } else if (!profile()) card = notice("info", "No one set up", "Open Settings to add a person.");
     mount($("#notices", root), card);
     bind($("#notices", root), handlers);
   }
 
+  function renderStep() {
+    const c = store.state.connecting;
+    $("#step", root).textContent = ui.busy ? (c?.step ? `${c.step}…` : "Connecting…") : "";
+  }
+
   function renderBusy() {
+    renderStep();
     const go = $("#go", root);
     mount(go, ui.busy ? raw('<span class="spinner"></span>') : icon(ui.game ? "gamepad" : "arrow", 16, ui.game ? 2 : 2.4));
     go.setAttribute("aria-label", ui.game ? "Sign in and play" : "Sign in");
@@ -228,7 +240,10 @@ export function login(root, { go }) {
     if (!p || !pw.value || ui.busy) return;
     ui.busy = true; ui.error = null; ui.popover = null;
     renderBusy(); renderNotices(); renderPop();
-    const res = await api("/api/login", { profileId: p.id, serverId: s?.id, password: pw.value, game: ui.game, ...certAnswer });
+    const res = await Promise.race([
+      api("/api/login", { profileId: p.id, serverId: s?.id, password: pw.value, game: ui.game, ...certAnswer }).catch(() => ({ ok: false, error: "unknown", details: "Dot itself didn't answer (dotd may have restarted)." })),
+      new Promise((r) => setTimeout(() => r({ ok: false, error: "noanswer", details: "Dot got no answer for 90 seconds. Settings → About → Show Dot's log has more." }), 90000)),
+    ]);
     if (res.error === "cert") {
       ui.busy = false;
       renderBusy();
@@ -242,7 +257,7 @@ export function login(root, { go }) {
       await refresh(); // app switches to the session screen
       return;
     }
-    ui.error = { kind: res.error, serverId: res.serverId };
+    ui.error = { kind: res.error, serverId: res.serverId, details: res.details };
     renderBusy(); renderNotices();
     if (res.error === "wrong") {
       const f = $("#field", root);
@@ -331,6 +346,7 @@ export function login(root, { go }) {
   cleanups.push(() => clearInterval(timer));
   cleanups.push(watch((st) => [st.profiles, st.servers, st.network.connected, st.lastEnd, st.features, st.canReconnect], () => { renderWho(); renderNotices(); }));
   cleanups.push(watch((st) => [st.audio?.volume, st.audio?.muted], renderDock));
+  cleanups.push(watch((st) => st.connecting, renderStep));
   cleanups.push(() => wifiCleanup?.());
   return () => cleanups.forEach((fn) => fn());
 }

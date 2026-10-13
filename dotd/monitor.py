@@ -404,6 +404,8 @@ class Monitor:
             if self.snapshot:
                 self.leave_standby()
             return
+        if time.time() < self.test_until:
+            return  # Test standby is in charge
         state, _, _ = self._main_state()
         if state == "off":
             self.off_since = self.off_since or time.time()
@@ -521,9 +523,20 @@ class Monitor:
         return d.ddc.set(VCP[name], max(0, int(value)))
 
     def test(self, seconds=10):
-        with self.lock:
-            self.test_until = time.time() + seconds
-            self.off_since = time.time() - 3600  # skip the delay
+        """Standby for `seconds`, right now. It doesn't wait for the monitor check loop, which can take
+        longer than the whole test when a monitor answers DDC/CI slowly."""
+        def run():
+            with self.lock:
+                self.test_until = time.time() + seconds
+                if not self.snapshot:
+                    self.enter_standby()
+            time.sleep(seconds)
+            with self.lock:
+                self.test_until = 0
+                if self.snapshot and self._main_state()[0] != "off":
+                    self.leave_standby()
+
+        threading.Thread(target=run, daemon=True).start()
 
     def set_dev_power(self, on):
         d = self.main()

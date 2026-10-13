@@ -39,6 +39,7 @@ class Dot:
         # the Windows password of whoever is signed in, kept in memory only (never on disk) so Dot can
         # reconnect after game mode; wiped at sign-out, standby, shutdown and whenever dotd restarts
         self.secret = None
+        self.last_error = None  # the last sign-in failure, with FreeRDP's own words
         self.certs = {}  # server id -> fingerprint approved for this run only ("connect anyway" without remembering)
         self.connecting = None  # {"profileId", "serverId"} while signing in
         self.last_end = None
@@ -169,17 +170,30 @@ class Dot:
             for server in candidates:
                 if system.probe(server["host"], server["port"]) is None:
                     continue
+                step = lambda text: (self.connecting.update(step=text), print(f"login: {server['name']}: {text}", flush=True))
+                self.connecting = {"profileId": profile_id, "serverId": server["id"], "step": ""}
+                step("Checking the certificate")
                 fingerprint, prompt = self.cert_decision(server, accept_cert, remember_cert)
                 if prompt:  # ask before any password goes to a server Dot can't vouch for
+                    self.connecting = None
                     return {"ok": False, "error": "cert", "cert": prompt, "serverId": server["id"]}
-                self.connecting = {"profileId": profile_id, "serverId": server["id"]}
-                result = rdp.check_password(self.client, server, account_for(profile, server), password, cfg,
-                                            fingerprint=fingerprint)
+                step("Checking the password")
+                acct = account_for(profile, server)
+                result, details = rdp.check_password(self.client, server, acct, password, cfg, fingerprint=fingerprint)
+                if result == "cert" and fingerprint and fingerprint != "ignore":
+                    # FreeRDP didn't take the pinned fingerprint; Dot verified this very certificate a moment ago
+                    step("Checking the password (Dot's own certificate check)")
+                    fingerprint = "ignore"
+                    result, details = rdp.check_password(self.client, server, acct, password, cfg, fingerprint=fingerprint)
+                print(f"login: {server['name']}: {result}" + (f"\n{details}" if result != "ok" and details else ""), flush=True)
                 if result == "server":
+                    self.last_error = {"server": server["name"], "error": result, "details": details, "at": time.time()}
                     continue
                 if result != "ok":
                     self.connecting = None
-                    return {"ok": False, "error": result, "serverId": server["id"]}
+                    self.last_error = {"server": server["name"], "error": result, "details": details, "at": time.time()}
+                    return {"ok": False, "error": result, "serverId": server["id"], "details": details}
+                step("Starting the session")
                 self.cfg.mutate(lambda d: d.update(lastProfile=profile_id))
                 self.last_end = None
                 self.connecting = None
@@ -193,7 +207,7 @@ class Dot:
                 self._open_session(server, profile, password, fingerprint=fingerprint)
                 return {"ok": True, "serverId": server["id"], "failover": server["id"] != server_id}
             self.connecting = None
-            return {"ok": False, "error": "server"}
+            return {"ok": False, "error": "server", "details": (self.last_error or {}).get("details", "")}
         finally:
             self.login_lock.release()
 
@@ -259,8 +273,12 @@ class Dot:
         fingerprint, prompt = self.cert_decision(server)
         if prompt:
             return "certcheck"  # not before the user has looked at this server's certificate
-        return rdp.check_password(self.client, server, profile, payload.get("password", ""), self.cfg.get(),
-                                  fingerprint=fingerprint)
+        result, details = rdp.check_password(self.client, server, profile, payload.get("password", ""), self.cfg.get(),
+                                             fingerprint=fingerprint)
+        if result == "cert" and fingerprint:
+            result, details = rdp.check_password(self.client, server, profile, payload.get("password", ""),
+                                                 self.cfg.get(), fingerprint="ignore")
+        return result
 
 
 def make_handler(dot: Dot, ui_dir: str):
@@ -324,6 +342,10 @@ def make_handler(dot: Dot, ui_dir: str):
                 return self.send_json({"networks": system.wifi_list(rescan="rescan" in q)})
             if url.path == "/api/timezones":
                 return self.send_json({"timezones": system.timezones()})
+            if url.path == "/api/logs":
+                if not dot.admin_ok(self.headers.get("X-Dot-Admin", "")):
+                    return self.send_json({"error": "locked"}, 403)
+                return self.send_json({"lines": system.logs(), "lastError": dot.last_error})
             if url.path == "/api/update":
                 return self.send_json(system.update_progress())
             if url.path == "/api/info":

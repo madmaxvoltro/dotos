@@ -15,7 +15,7 @@ for f in /boot/firmware/cmdline.txt /boot/cmdline.txt /boot/firmware/config.txt 
   [ -f "$f.before-dot" ] && mv "$f.before-dot" "$f"
 done
 plymouth-set-default-theme -R bgrt >/dev/null 2>&1 || true
-rm -rf /usr/share/plymouth/themes/dot /usr/lib/dot /var/lib/dot
+rm -rf /usr/share/plymouth/themes/dot /usr/lib/dot /var/lib/dot /usr/local/bin/dot
 
 if [ "${1:-}" = "--purge" ]; then
   rm -rf /etc/dot

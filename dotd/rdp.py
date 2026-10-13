@@ -98,8 +98,9 @@ def cert_args(client, fingerprint):
     """FreeRDP accepts exactly the certificate Dot checked (or the user approved), nothing else."""
     if not fingerprint:
         return ["/cert:tofu" if client["major"] >= 3 else "/cert-tofu"]
-    if client["major"] < 3:
-        return ["/cert-ignore"]  # FreeRDP 2 can't pin; Dot has just checked the certificate itself
+    if fingerprint == "ignore" or client["major"] < 3:
+        # Dot checked the certificate itself moments ago (FreeRDP 2 can't pin at all)
+        return ["/cert:ignore" if client["major"] >= 3 else "/cert-ignore"]
     colons = ":".join(fingerprint[i:i + 2] for i in range(0, len(fingerprint), 2))
     return [f"/cert:fingerprint:sha256:{fingerprint},fingerprint:sha256:{colons}"]
 
@@ -146,31 +147,43 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
     return args
 
 
-def _popen(client, args):
-    """FreeRDP in the kiosk session. FreeRDP 3 reads its arguments (password included) from stdin."""
+def _popen(client, args, quiet=False):
+    """FreeRDP in the kiosk session. FreeRDP 3 reads its arguments (password included) from stdin.
+    quiet: no windows at all (the password check), so a dialog can never sit waiting off-screen."""
     v3 = client["major"] >= 3
     cmd = [client["bin"], "/args-from:stdin"] if v3 else [client["bin"], *args]
-    proc = kiosk.popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    env = kiosk.env()
+    if quiet and "sdl" in os.path.basename(client["bin"]):
+        env["SDL_VIDEODRIVER"] = "dummy"
+    proc = kiosk.popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     if v3:
         proc.stdin.write("\n".join(args) + "\n")
     proc.stdin.close()
     return proc
 
 
-def check_password(client, server, profile, password, cfg, timeout=25, fingerprint=None):
-    """Returns 'ok' or an error kind: wrong, expired, locked, disabled, denied, cert, server, unknown."""
+def check_password(client, server, profile, password, cfg, timeout=20, fingerprint=None):
+    """(result, details). result is 'ok' or an error kind: wrong, expired, locked, disabled, denied, cert,
+    server, noanswer, unknown. details is the end of FreeRDP's own output, for the "Details" button."""
     if system.DEV:
         time.sleep(1.2)
         if "off" in server["host"]:
-            return "server"
-        return {"dot": "ok", "expired": "expired", "locked": "locked"}.get(password, "wrong")
-    proc = _popen(client, build_args(client, server, profile, password, cfg, auth_only=True, fingerprint=fingerprint))
+            return "server", "[ERROR] ERRCONNECT_CONNECT_TRANSPORT_FAILED (dev)"
+        if password == "hang":
+            time.sleep(3)
+            return "noanswer", "(dev) FreeRDP gave no answer in time"
+        result = {"dot": "ok", "expired": "expired", "locked": "locked"}.get(password, "wrong")
+        return result, "" if result == "ok" else f"[ERROR][com.freerdp.core] - ERRCONNECT_{result.upper()} (dev)"
+    proc = _popen(client, build_args(client, server, profile, password, cfg, auth_only=True, fingerprint=fingerprint),
+                  quiet=True)
     try:
         out, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        return "server"
-    return classify(proc.returncode, out or "")
+        out, _ = proc.communicate()
+        return "noanswer", ((out or "") + f"\n(no answer from FreeRDP after {timeout} s)")[-2000:]
+    out = out or ""
+    return classify(proc.returncode, out), out[-2000:]
 
 
 class Session:

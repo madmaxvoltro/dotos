@@ -14,6 +14,7 @@ export const ACCOUNT_ERRORS = {
   noclient: ["info", "FreeRDP is missing", "Run the installer again to add it."],
   noserver: ["server", "No server set up", "Add a server in Settings."],
   unknown: ["info", "Couldn't sign in", "Something unexpected happened. Try again."],
+  noanswer: ["server", "Remote Desktop didn't answer", "The server took too long. Details shows what happened."],
   certcheck: ["shield", "Certificate not checked yet", "Sign in once from the login screen to review this server's certificate, then check the password here."],
   off: ["gamepad", "Game mode isn't set up", "Choose how this server plays games in Settings → Games."],
   nomoonlight: ["gamepad", "Moonlight isn't installed", "Run the installer again without --no-games."],
@@ -32,6 +33,13 @@ export function modal(markup, handlers = {}) {
   scrim.addEventListener("mousedown", (e) => { if (e.target === scrim) close(); });
   setTimeout(() => ($("input", scrim) || $("button", scrim))?.focus(), 30);
   return { el: scrim, close };
+}
+
+/** What actually happened: FreeRDP's own output, for a "Details" button on an error. */
+export function detailsModal(title, text) {
+  modal(html`<h2 class="title" style="font-size:22px">${title}</h2>
+    <pre class="mono" style="margin:16px 0 0;padding:12px 14px;border-radius:12px;background:var(--raised);font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-all;max-height:340px;overflow:auto;user-select:text">${text || "No details."}</pre>
+    <div class="actions"><button class="btn btn-primary" data-on-click="close">Close</button></div>`);
 }
 
 export function confirmModal(title, text, label, onYes) {

@@ -286,6 +286,7 @@ mkdir -p "$PREFIX/ui"
 find "$PREFIX/ui" -mindepth 1 -maxdepth 1 ! -name fonts -exec rm -rf {} +
 cp -r "$SRC/ui/." "$PREFIX/ui/"
 chmod +x "$PREFIX/system/session.sh" "$PREFIX/system/clock.sh" "$PREFIX/system/side.sh"
+install -m 755 "$PREFIX/system/dot" /usr/local/bin/dot  # sudo dot diag / test-standby / ddc / logs / update
 cp "$SRC/install.sh" "$SRC/uninstall.sh" "$PREFIX/"
 chmod +x "$PREFIX/install.sh" "$PREFIX/uninstall.sh"
 [ -f "$SRC/VERSION" ] && cp "$SRC/VERSION" "$PREFIX/VERSION"
