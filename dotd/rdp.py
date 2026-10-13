@@ -159,6 +159,7 @@ def _popen(client, args, quiet=False):
     if v3:
         proc.stdin.write("\n".join(args) + "\n")
     proc.stdin.close()
+    proc.stdin = None  # closed on purpose: communicate() must not try to flush it
     return proc
 
 
