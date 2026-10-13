@@ -423,6 +423,8 @@ export function preferencesPanel(root, { connection = true, device = true } = {}
         <div class="setting"><div class="grow"><div class="t">Sound</div><div class="s">Play the server's audio through this Dot.</div></div>${switchEl("rdp.sound", rdp.sound, "Sound")}</div>
         <div class="setting"><div class="grow"><div class="t">Microphone</div><div class="s">For calls on the server.</div></div>${switchEl("rdp.microphone", rdp.microphone, "Microphone")}</div>
         <div class="setting"><div class="grow"><div class="t">Clipboard</div></div>${switchEl("rdp.clipboard", rdp.clipboard, "Clipboard")}</div>
+        <div class="setting"><div class="grow"><div class="t">Graphics</div><div class="s">If Windows stays black after signing in, try Compatible. Fast uses RDP's video stream.</div></div>
+          ${seg("rdp.graphics", rdp.graphics || "auto", [["auto", "Fast"], ["compatible", "Compatible"]])}</div>
         <div class="setting"><div class="grow"><div class="t">Remote Desktop client</div><div class="s">Auto uses FreeRDP's X11 client. Try SDL if Windows looks wrong or won't connect.</div></div>
           ${seg("rdp.client", rdp.client || "auto", [["auto", "Auto"], ["x11", "X11"], ["sdl", "SDL"]])}</div>
         <div class="setting"><div class="grow"><div class="t">Detailed log</div><div class="s">FreeRDP writes everything it does to Dot's log (About → Show Dot's log). For finding problems.</div></div>${switchEl("rdp.debugLog", rdp.debugLog, "Detailed log")}</div>

@@ -35,6 +35,7 @@ DEFAULTS = {
         "clipboard": True,
         "usbDrives": False,
         "client": "auto",  # auto | x11 | sdl: which FreeRDP client
+        "graphics": "auto",  # auto (GFX / H.264) | compatible (older bitmap updates, for black screens)
         "debugLog": False,  # FreeRDP's detailed log in Dot's log, for "why doesn't it connect?"
     },
     "screen": {

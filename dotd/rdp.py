@@ -129,7 +129,10 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
     if auth_only:
         args.append("/auth-only" if v3 else "+auth-only")
         return args
-    args += ["/f", "/gfx", "/title:Dot Session"]
+    # GFX (the H.264 graphics pipeline) is fast but some Windows / client combinations show only black;
+    # "compatible" uses the older bitmap updates instead
+    compatible = rdp.get("graphics") == "compatible"
+    args += ["/f", "-gfx" if compatible else "/gfx", "/title:Dot Session"]
     if "xfreerdp" in os.path.basename(client["bin"]):
         args.append("/wm-class:dot-session")  # X11 only; sway's window rules match it
     args += QUALITY.get(rdp.get("quality"), QUALITY["auto"])
@@ -148,7 +151,7 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
     active = [o for o in outputs if o.get("active")]
     if not single and screen.get("mode", "extend") == "extend" and len(active) > 1:
         args.append("/multimon")  # sends Windows each monitor's size, position and which one is primary
-    else:
+    elif not compatible:
         args.append("/dynamic-resolution")  # follows resolution changes; FreeRDP pairs it badly with /multimon
     scale = windows_scale(screen, active)
     if scale != 100:
