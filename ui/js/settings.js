@@ -4,7 +4,7 @@ import { $, api, bind, html, icon, mount, refresh, setAdminToken, store, toast }
 import { bluetoothPanel } from "./bluetooth.js";
 import { gamesPanel } from "./games.js";
 import { screenPanel } from "./screen.js";
-import { confirmModal, pinPanel, preferencesPanel, profileForm, profileList, regionPanel, serverForm, serverList, soundPanel, tailscalePanel, wifiPanel } from "./parts.js";
+import { confirmModal, modal, pinPanel, preferencesPanel, profileForm, profileList, regionPanel, serverForm, serverList, soundPanel, tailscalePanel, wifiPanel } from "./parts.js";
 
 const SECTIONS = [
   ["people", "People", "users"],
@@ -138,7 +138,10 @@ export function settings(root, { go, token }) {
           <button class="btn btn-ghost btn-danger" data-on-click="reset">Run setup again</button>
         </div>`);
         bind(body, {
-          update: () => confirmModal("Update Dot?", "Dot downloads the latest version and restarts its screen. It takes a minute or two.", "Update", async () => { await api("/api/system/update", {}); toast("Updating… the screen restarts when it's done", 6000); }),
+          update: () => confirmModal("Update Dot?", "Dot downloads the latest version and restarts its screen. Your settings are kept. It takes a minute or two.", "Update", async () => {
+            await api("/api/system/update", {});
+            updateProgress();
+          }),
           reboot: () => confirmModal("Restart this Dot?", "", "Restart", () => { api("/api/power", { action: "reboot" }); go("off", { action: "reboot" }); }),
           reset: () => confirmModal("Run setup again?", "Your servers and people are kept. You'll walk through every step again.", "Run setup", async () => { await api("/api/system/reset", {}); await refresh(); go("setup"); }),
         });
@@ -158,6 +161,26 @@ export function settings(root, { go, token }) {
     clearTimeout(idleTimer);
     ["keydown", "mousedown", "mousemove"].forEach((e) => window.removeEventListener(e, poke));
   };
+}
+
+/** The same progress as the on-screen installer: bar, percentage, step and the log. */
+function updateProgress() {
+  const m = modal(html`<h2 class="title" style="font-size:22px">Updating Dot</h2>
+    <div class="boot" style="position:static;margin-top:20px;align-items:stretch">
+      <div class="bar" style="width:100%;margin:0"><div id="ufill"></div></div></div>
+    <div class="row small" style="justify-content:space-between;margin-top:10px"><span id="ustep">Starting</span><span class="mono" id="upct">0%</span></div>
+    <div class="mono" id="ulog" style="margin-top:16px;height:180px;overflow:hidden;font-size:11.5px;line-height:1.55;color:rgba(255,255,255,.45);white-space:pre"></div>`);
+  const t = setInterval(async () => {
+    if (!document.body.contains(m.el)) return clearInterval(t);
+    let u;
+    try { u = await api("/api/update"); } catch { return; } // dotd restarting: the page reloads shortly
+    const pct = Math.round(Number(u.pct) || 0);
+    $("#ufill", m.el).style.width = `${pct}%`;
+    $("#upct", m.el).textContent = `${pct}%`;
+    $("#ustep", m.el).textContent = u.error ? `Stopped while: ${u.step}` : u.step || "Starting";
+    $("#ulog", m.el).textContent = (u.log || []).join("\n");
+    if (u.done) { $("#ustep", m.el).textContent = "Done. The screen restarts now."; clearInterval(t); }
+  }, 800);
 }
 
 function formatUptime(s) {

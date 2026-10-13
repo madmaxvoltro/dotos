@@ -271,9 +271,49 @@ def device_info():
     }
 
 
+INSTALL_DIR = os.environ.get("DOT_INSTALL_DIR", "/run/dot-install")
+
+
+def update_progress():
+    """What install.sh --progress is doing: {pct, step, done, error} plus the last log lines."""
+    state = {}
+    try:
+        with open(os.path.join(INSTALL_DIR, "state.json")) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        pass
+    log = []
+    try:
+        with open(os.path.join(INSTALL_DIR, "log.txt"), "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 8192))
+            log = [re.sub(r"\x1b\[[0-9;]*[A-Za-z]|\r", "", l) for l in f.read().decode("utf-8", "replace").splitlines()]
+    except OSError:
+        pass
+    return {**state, "log": [l for l in log if l.strip()][-14:]}
+
+
 def start_update():
     """Re-run the installer in its own transient unit so it outlives dotd's restart."""
     if DEV:
         print("[dev] update requested")
+        os.makedirs(INSTALL_DIR, exist_ok=True)
+
+        def fake():
+            for pct, step in ((5, "Downloading Dot"), (30, "Installing Dot"), (60, "Setting up the kiosk"), (90, "Restarting Dot")):
+                with open(os.path.join(INSTALL_DIR, "state.json"), "w") as f:
+                    json.dump({"pct": pct, "step": step, "mode": "update"}, f)
+                with open(os.path.join(INSTALL_DIR, "log.txt"), "a", encoding="utf-8") as f:
+                    f.write(f"● {step}\n  ...\n")
+                time.sleep(1.5)
+            with open(os.path.join(INSTALL_DIR, "state.json"), "w") as f:
+                json.dump({"pct": 100, "step": "Restarting the screen", "mode": "update", "done": True}, f)
+
+        for name in ("state.json", "log.txt"):
+            try:
+                os.remove(os.path.join(INSTALL_DIR, name))
+            except OSError:
+                pass
+        threading.Thread(target=fake, daemon=True).start()
         return
     subprocess.Popen(["systemd-run", "--unit", "dot-update", "--collect", "/usr/lib/dot/update.sh"])

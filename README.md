@@ -67,7 +67,9 @@ Options go after `sudo bash -s --`, for example `... | sudo bash -s -- --tailsca
 | `--no-splash` | Keeps the normal text boot instead of the Dot splash |
 | `--no-reboot` | Doesn't restart at the end |
 | `--no-games` | Skips Moonlight (game mode) |
-| `--gui` | Shows the install on the Pi's own screen: the options as a menu, then progress, time left and the log |
+| `--gui` | Shows the install on the Pi's own screen: the options as a menu, then progress, time left and the log. Works with `--update` too |
+| `--update` | Updates the code (and adds any packages a newer version needs). Keeps everything, no restart |
+| `--setup` | After a reinstall, walks through the on-screen setup again with everything filled in |
 | `--branch dev` | Installs from another branch |
 
 The installer adds:
@@ -85,6 +87,8 @@ curl -fsSL https://raw.githubusercontent.com/madmaxvoltro/dotos/main/install.sh 
 ```
 
 The Pi's screen first shows the options (game mode, Tailscale, boot splash): **↑ ↓** to move, **Space** to change, **Enter** to install. It starts by itself after 90 seconds. Then it shows the Dot mark with a progress bar, the percentage, the time left and the install log on the left. The screen is a text console at this point, so it's keyboard only.
+
+**Running it again on a Dot reinstalls it.** Everything is installed again, but your servers, people, Wi-Fi, Tailscale and settings are kept, and the options you chose last time are already selected. With `--gui`, the menu also offers **Setup again**, which walks you through the on-screen setup with everything already filled in. While Dot is running, `--gui` draws on a second console and switches back when it's done. **Settings → About → Update Dot** shows the same progress inside Dot.
 
 ### 3. Set it up on the screen
 

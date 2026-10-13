@@ -269,6 +269,8 @@ def make_handler(dot: Dot, ui_dir: str):
                 return self.send_json({"networks": system.wifi_list(rescan="rescan" in q)})
             if url.path == "/api/timezones":
                 return self.send_json({"timezones": system.timezones()})
+            if url.path == "/api/update":
+                return self.send_json(system.update_progress())
             if url.path == "/api/info":
                 return self.send_json({**system.device_info(), "version": dot.state()["version"]})
             if url.path == "/api/games/apps":

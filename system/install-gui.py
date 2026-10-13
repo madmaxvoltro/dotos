@@ -40,6 +40,17 @@ OPTIONS = [
     ("tailscale", "Tailscale", "reach servers on other networks"),
     ("splash", "Boot splash", "the white dot while starting"),
 ]
+SETUP_OPTION = ("setup", "Setup again", "walk through setup, everything filled in")
+TITLES = {  # mode -> (menu title, menu subtitle, while working, when done)
+    "install": ("Install Dot", "Choose what to install", "Installing Dot", "Dot is installed"),
+    "reinstall": ("Reinstall Dot", "Your servers, people and settings are kept", "Reinstalling Dot", "Dot is reinstalled"),
+    "update": ("Update Dot", "", "Updating Dot", "Dot is up to date"),
+}
+MODE = "install"
+
+
+def options_for(mode):
+    return OPTIONS + [SETUP_OPTION] if mode == "reinstall" else OPTIONS
 AUTOSTART = 90  # seconds before installing with the defaults when nobody's at the keyboard
 
 
@@ -162,19 +173,22 @@ def frame(screen, log_lines, state, options=None, cursor=0, countdown=None):
     def center(row, text):
         cells.append((row, cx - len(ANSI.sub("", text)) // 2, text))
 
+    titles = TITLES.get(MODE, TITLES["install"])
+    opts = options_for(MODE)
     if options is not None:
-        center(y, BOLD + WHITE + "Install Dot")
-        center(y + 1, GRAY + "Choose what to install")
-        width = 46
-        for i, (key, name, desc) in enumerate(OPTIONS):
+        center(y, BOLD + WHITE + titles[0])
+        center(y + 1, GRAY + titles[1])
+        width = 56
+        for i, (key, name, desc) in enumerate(opts):
             on = options[key]
             mark = (WHITE + "[x]") if on else (DIM + "[ ]")
             pointer = (ACCENT + "› ") if cursor == i else "  "
             cells.append((y + 3 + i, cx - width // 2, f"{pointer}{mark} {WHITE}{name:<13}{DIM}{desc}"))
-        go = len(OPTIONS)
-        label = " Install " if cursor != go else "› Install ‹"
+        go = len(opts)
+        word = "Reinstall" if MODE == "reinstall" else "Install"
+        label = f" {word} " if cursor != go else f"› {word} ‹"
         center(y + 4 + go, (BOLD + WHITE if cursor == go else GRAY) + label)
-        center(y + 6 + go, DIM + "↑ ↓ move   Space change   Enter install")
+        center(y + 6 + go, DIM + f"↑ ↓ move   Space change   Enter {word.lower()}")
         if countdown is not None:
             center(y + 7 + go, DIM + f"Starts by itself in {countdown} s")
         return cells
@@ -186,10 +200,10 @@ def frame(screen, log_lines, state, options=None, cursor=0, countdown=None):
         center(y + 4, DIM + "The log on the left shows what happened.")
         return cells
     if state.get("done"):
-        center(y, BOLD + WHITE + "Dot is installed")
+        center(y, BOLD + WHITE + titles[3])
         center(y + 2, GRAY + (state.get("step") or "Restarting"))
         return cells
-    center(y, BOLD + WHITE + "Installing Dot")
+    center(y, BOLD + WHITE + titles[2])
     bw = min(48, screen.cols - left_w - 8)
     center(y + 2, bar(bw, pct))
     center(y + 3, WHITE + f"{pct:.0f}%" + DIM + "  ·  " + GRAY + fmt_left(state.get("eta")))
@@ -235,12 +249,18 @@ class Eta:
 
 
 def ask_options(screen, args, defaults):
-    options = dict(defaults)
-    cursor = len(OPTIONS)  # start on Install
+    opts = options_for(MODE)
+    options = {k: bool(defaults.get(k)) for k, _, _ in opts}
+    cursor = len(opts)  # start on Install
     deadline = time.time() + AUTOSTART
     while True:
         left = max(0, int(deadline - time.time()))
-        screen.draw(frame(screen, ["Ready to install.", "Choose options on the right, then press Enter."], {},
+        intro = ["Ready to install.", "Choose options on the right, then press Enter."]
+        if MODE == "reinstall":
+            intro = [f"Dot {args.version} is installed." if args.version else "Dot is installed.",
+                     "Reinstalling keeps your servers, people, Wi-Fi and settings.",
+                     "Choose options on the right, then press Enter."]
+        screen.draw(frame(screen, intro, {},
                           options=options, cursor=cursor, countdown=left))
         if left == 0:
             return options
@@ -249,15 +269,15 @@ def ask_options(screen, args, defaults):
             continue
         deadline = time.time() + AUTOSTART  # someone's there: no rush
         if k == "up":
-            cursor = (cursor - 1) % (len(OPTIONS) + 1)
+            cursor = (cursor - 1) % (len(opts) + 1)
         elif k == "down":
-            cursor = (cursor + 1) % (len(OPTIONS) + 1)
-        elif k == "space" and cursor < len(OPTIONS):
-            key = OPTIONS[cursor][0]
+            cursor = (cursor + 1) % (len(opts) + 1)
+        elif k == "space" and cursor < len(opts):
+            key = opts[cursor][0]
             options[key] = not options[key]
         elif k == "enter":
-            if cursor < len(OPTIONS):
-                key = OPTIONS[cursor][0]
+            if cursor < len(opts):
+                key = opts[cursor][0]
                 options[key] = not options[key]
             else:
                 return options
@@ -270,26 +290,31 @@ def main():
     ap.add_argument("--log", default="/run/dot-install/log.txt")
     ap.add_argument("--choices", default="/run/dot-install/choices.json")
     ap.add_argument("--defaults", default='{"games": true, "tailscale": false, "splash": true}')
+    ap.add_argument("--mode", default="install", choices=list(TITLES))
+    ap.add_argument("--version", default="")
     ap.add_argument("--frame", help="render one frame to this file and exit (layout check)")
     ap.add_argument("--frame-state", default="{}")
     ap.add_argument("--options", action="store_true", help="with --frame: draw the options screen")
     args = ap.parse_args()
+    global MODE
+    MODE = args.mode
 
     if args.frame:
         s = Screen(None, frame_file=args.frame)
         lines = [f"Get:{i} http://archive.raspberrypi.com/debian trixie/main arm64 package-{i} [{i * 13} kB]" for i in range(40)]
         state = json.loads(args.frame_state)
         s.draw(frame(s, lines, state, options=json.loads(args.defaults) if args.options else None,
-                     cursor=len(OPTIONS), countdown=AUTOSTART if args.options else None))
+                     cursor=len(options_for(MODE)), countdown=AUTOSTART if args.options else None))
         return
 
     screen = Screen(args.tty)
     try:
-        options = ask_options(screen, args, json.loads(args.defaults))
-        tmp = args.choices + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(options, f)
-        os.replace(tmp, args.choices)
+        if MODE != "update":  # an update has nothing to choose
+            options = ask_options(screen, args, json.loads(args.defaults))
+            tmp = args.choices + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(options, f)
+            os.replace(tmp, args.choices)
 
         eta = Eta()
         while True:
