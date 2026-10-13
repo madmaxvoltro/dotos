@@ -37,6 +37,7 @@ DEFAULTS = {
         "client": "auto",  # auto | x11 | sdl: which FreeRDP client
         "graphics": "auto",  # auto "Smooth" (AVC420; "light" means the same) | sharp (RemoteFX) | compatible (no GFX)
         "debugLog": False,  # FreeRDP's detailed log in Dot's log, for "why doesn't it connect?"
+        "hwDecode": False,  # experimental: FreeRDP from `sudo dot hwdecode`, H.264 on the Pi's hardware decoder
     },
     "screen": {
         "enabled": True,

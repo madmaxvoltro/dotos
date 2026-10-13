@@ -116,11 +116,21 @@ Nothing to install for everyday use. Dot uses Windows' own Remote Desktop. (Game
 - Turn on Remote Desktop: *Settings → System → Remote Desktop*.
 - The user must be allowed to sign in remotely (an administrator, or a member of *Remote Desktop Users*).
 - Dot trusts a server's certificate the first time it connects. If the certificate changes later, Dot refuses to connect and says so.
-- **Optional: 60 fps instead of 30.** Windows limits Remote Desktop to 30 frames per second by default. To raise it, run this in an administrator terminal on the server, then restart:
+- **Optional: 60 fps instead of 30.** Windows limits Remote Desktop to 30 frames per second by default. To raise it, run this in an administrator terminal on the server, then restart. Not on a Pi 4: it can't decode 60 frames a second of video, and falls behind.
 
   ```
   reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations" /v DWMFRAMEINTERVAL /t REG_DWORD /d 15 /f
   ```
+
+## Hardware video decoding (experimental)
+
+FreeRDP decodes Remote Desktop's video on the Pi's processor. On a Pi 4 that's the heaviest job during video. Dot can build its own FreeRDP with a patch ([`system/freerdp/h264-v4l2m2m.patch`](system/freerdp/h264-v4l2m2m.patch)) that hands H.264 to the Pi's hardware decoder instead:
+
+```bash
+sudo dot hwdecode
+```
+
+It builds FreeRDP 3.15 into `/opt/dot/freerdp` in the background (about 45 minutes on a Pi 4; closing SSH doesn't stop it), next to the system's FreeRDP. Then turn on *Settings → Connection → Hardware video decoding* and use *Graphics → Smooth*. If the hardware decoder doesn't keep up frame by frame, FreeRDP switches back to software decoding by itself and says why in `dot logs`. `sudo dot hwdecode --remove` takes it away.
 
 ## Monitors
 

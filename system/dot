@@ -7,6 +7,8 @@
 #   sudo dot ddc [BUS]      try reading the monitor's brightness and power over DDC/CI
 #   dot logs                follow Dot's logs
 #   sudo dot update [--gui] update Dot
+#   sudo dot hwdecode       build FreeRDP for the Pi's hardware video decoder (about 45 min;
+#                           --force builds again, --remove takes it away)
 set -uo pipefail
 
 API=http://127.0.0.1:7777
@@ -123,5 +125,16 @@ print('  $conn:', 'read %d bytes, preferred mode %s' % (len(d), edid.preferred_m
   ddc) ddc_test "${2:-}" ;;
   logs) journalctl -u dotd -u dot-kiosk -f ;;
   update) shift; curl -fsSL https://raw.githubusercontent.com/madmaxvoltro/dotos/main/install.sh | bash -s -- --update "$@" ;;
-  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
+  hwdecode)
+    shift
+    if [ "${1:-}" = --remove ]; then exec bash /usr/lib/dot/system/freerdp/build.sh --remove; fi
+    # in its own unit: closing SSH (or Ctrl+C) doesn't stop a 45-minute build
+    systemctl reset-failed dot-hwdecode 2>/dev/null
+    if ! systemctl is-active -q dot-hwdecode; then
+      systemd-run --unit=dot-hwdecode --collect --quiet bash /usr/lib/dot/system/freerdp/build.sh "$@" || exit 1
+    fi
+    echo "Building in the background. Ctrl+C stops watching, not the build; watch again with: sudo dot hwdecode"
+    journalctl -u dot-hwdecode -f -n 50 -o cat
+    ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

@@ -1,0 +1,256 @@
+--- a/libfreerdp/codec/h264_ffmpeg.c	2026-10-13 22:05:52.165161300 +0200
++++ b/libfreerdp/codec/h264_ffmpeg.c	2026-10-13 22:05:52.417600500 +0200
+@@ -25,6 +25,9 @@
+ #include <freerdp/codec/h264.h>
+ #include <libavcodec/avcodec.h>
+ #include <libavutil/opt.h>
++#include <stdlib.h>
++#include <string.h>
++#include <winpr/synch.h>
+ 
+ #include "h264.h"
+ 
+@@ -81,6 +84,11 @@
+ 	AVPacket bufferpacket;
+ #endif
+ 	AVPacket* packet;
++	/* Dot: the Raspberry Pi's hardware H.264 decoder (h264_v4l2m2m), with FREERDP_H264_V4L2M2M=1 */
++	BOOL v4l2m2m;
++	BYTE* nv12U;
++	BYTE* nv12V;
++	size_t nv12Size;
+ #if defined(WITH_VAAPI) || defined(WITH_VAAPI_H264_ENCODING)
+ 	AVBufferRef* hwctx;
+ 	AVFrame* hwVideoFrame;
+@@ -241,6 +249,134 @@
+ 	return FALSE;
+ }
+ 
++/* Dot: the decoder is opened here so a failing hardware decoder can be swapped for the software one
++ * mid-session. Software: slice threads only (frame threads would hold frames back). */
++static enum AVPixelFormat dot_get_format(WINPR_ATTR_UNUSED struct AVCodecContext* ctx,
++                                         const enum AVPixelFormat* fmts)
++{
++	for (const enum AVPixelFormat* p = fmts; *p != AV_PIX_FMT_NONE; p++)
++		if (*p == AV_PIX_FMT_YUV420P)
++			return *p;
++	for (const enum AVPixelFormat* p = fmts; *p != AV_PIX_FMT_NONE; p++)
++		if (*p == AV_PIX_FMT_NV12)
++			return *p;
++	return fmts[0];
++}
++
++static BOOL dot_open_decoder(H264_CONTEXT* WINPR_RESTRICT h264, H264_CONTEXT_LIBAVCODEC* sys,
++                             BOOL v4l2m2m)
++{
++	if (sys->codecDecoderContext)
++		avcodec_free_context(&sys->codecDecoderContext);
++	sys->v4l2m2m = FALSE;
++	sys->codecDecoder = v4l2m2m ? avcodec_find_decoder_by_name("h264_v4l2m2m")
++	                            : avcodec_find_decoder(AV_CODEC_ID_H264);
++	if (!sys->codecDecoder)
++		return FALSE;
++	sys->codecDecoderContext = avcodec_alloc_context3(sys->codecDecoder);
++	if (!sys->codecDecoderContext)
++		return FALSE;
++	sys->codecDecoderContext->flags |= AV_CODEC_FLAG_LOW_DELAY;
++	if (v4l2m2m)
++	{
++		sys->codecDecoderContext->get_format = dot_get_format;
++		sys->codecDecoderContext->pix_fmt = AV_PIX_FMT_YUV420P;
++		sys->codecDecoderContext->width = (int)MIN(INT32_MAX, h264->width);
++		sys->codecDecoderContext->height = (int)MIN(INT32_MAX, h264->height);
++	}
++	else
++	{
++		sys->codecDecoderContext->thread_type = FF_THREAD_SLICE;
++		sys->codecDecoderContext->thread_count = 0;
++	}
++	if (avcodec_open2(sys->codecDecoderContext, sys->codecDecoder, NULL) < 0)
++	{
++		avcodec_free_context(&sys->codecDecoderContext);
++		return FALSE;
++	}
++	sys->v4l2m2m = v4l2m2m;
++	return TRUE;
++}
++
++/* Dot: 1 = a frame, -3 = give up on the hardware decoder (the caller switches to software).
++ * RDP sends one whole frame per packet and shows it at once, so the frame for this packet has to
++ * come out now; a decoder that holds frames back would draw each one with the next frame's regions. */
++static int dot_v4l2m2m_decompress(H264_CONTEXT* WINPR_RESTRICT h264, H264_CONTEXT_LIBAVCODEC* sys,
++                                  AVPacket* packet)
++{
++	int status = avcodec_send_packet(sys->codecDecoderContext, packet);
++	if (status < 0)
++	{
++		WLog_Print(h264->log, WLOG_WARN, "h264_v4l2m2m: send_packet failed (%s)", av_err2str(status));
++		return -3;
++	}
++	for (int i = 0; i < 250; i++) /* up to about a quarter of a second */
++	{
++		status = avcodec_receive_frame(sys->codecDecoderContext, sys->videoFrame);
++		if (status != AVERROR(EAGAIN))
++			break;
++		Sleep(1);
++	}
++	if (status == AVERROR(EAGAIN))
++	{
++		WLog_Print(h264->log, WLOG_WARN, "h264_v4l2m2m: the decoder held a frame back");
++		return -3;
++	}
++	if (status < 0)
++	{
++		WLog_Print(h264->log, WLOG_WARN, "h264_v4l2m2m: receive_frame failed (%s)", av_err2str(status));
++		return -3;
++	}
++
++	AVFrame* f = sys->videoFrame;
++	BYTE** pYUVData = h264->pYUVData;
++	UINT32* iStride = h264->iStride;
++	if ((f->format == AV_PIX_FMT_YUV420P) || (f->format == AV_PIX_FMT_YUVJ420P))
++	{
++		for (size_t x = 0; x < 3; x++)
++		{
++			pYUVData[x] = f->data[x];
++			iStride[x] = (UINT32)MAX(0, f->linesize[x]);
++		}
++		return 1;
++	}
++	if (f->format == AV_PIX_FMT_NV12)
++	{
++		/* FreeRDP converts planar YUV: split the interleaved chroma */
++		const size_t cw = ((size_t)f->width + 1) / 2;
++		const size_t ch = ((size_t)f->height + 1) / 2;
++		if (cw * ch > sys->nv12Size)
++		{
++			free(sys->nv12U);
++			free(sys->nv12V);
++			sys->nv12U = malloc(cw * ch);
++			sys->nv12V = malloc(cw * ch);
++			sys->nv12Size = (sys->nv12U && sys->nv12V) ? cw * ch : 0;
++			if (!sys->nv12Size)
++				return -3;
++		}
++		for (size_t y = 0; y < ch; y++)
++		{
++			const BYTE* src = f->data[1] + y * (size_t)f->linesize[1];
++			BYTE* u = sys->nv12U + y * cw;
++			BYTE* v = sys->nv12V + y * cw;
++			for (size_t x = 0; x < cw; x++)
++			{
++				u[x] = src[2 * x];
++				v[x] = src[2 * x + 1];
++			}
++		}
++		pYUVData[0] = f->data[0];
++		pYUVData[1] = sys->nv12U;
++		pYUVData[2] = sys->nv12V;
++		iStride[0] = (UINT32)MAX(0, f->linesize[0]);
++		iStride[1] = iStride[2] = (UINT32)cw;
++		return 1;
++	}
++	WLog_Print(h264->log, WLOG_WARN, "h264_v4l2m2m: unexpected picture format %d", f->format);
++	return -3;
++}
++
+ static int libavcodec_decompress(H264_CONTEXT* WINPR_RESTRICT h264,
+                                  const BYTE* WINPR_RESTRICT pSrcData, UINT32 SrcSize)
+ {
+@@ -280,6 +416,20 @@
+ 	packet->data = cnv.pv;
+ 	packet->size = (int)MIN(SrcSize, INT32_MAX);
+ 
++	if (sys->v4l2m2m)
++	{
++		rc = dot_v4l2m2m_decompress(h264, sys, packet);
++		if (rc != -3)
++			goto fail;
++		WLog_Print(h264->log, WLOG_WARN, "h264_v4l2m2m: switching to software decoding");
++		rc = -1;
++		if (!dot_open_decoder(h264, sys, FALSE))
++		{
++			WLog_Print(h264->log, WLOG_ERROR, "Failed to open libav codec");
++			goto fail;
++		}
++	}
++
+ 	WINPR_ASSERT(sys->codecDecoderContext);
+ 	/* avcodec_decode_video2 is deprecated with libavcodec 57.48.101 */
+ #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
+@@ -597,6 +747,8 @@
+ 	}
+ 
+ 	libavcodec_destroy_encoder_context(h264);
++	free(sys->nv12U);
++	free(sys->nv12V);
+ 	free(sys);
+ 	h264->pSystemData = NULL;
+ }
+@@ -677,57 +829,17 @@
+ 
+ 	if (!h264->Compressor)
+ 	{
+-		sys->codecDecoder = avcodec_find_decoder(AV_CODEC_ID_H264);
+-
+-		if (!sys->codecDecoder)
+-		{
+-			WLog_Print(h264->log, WLOG_ERROR, "Failed to find libav H.264 codec");
+-			goto EXCEPTION;
+-		}
+-
+-		sys->codecDecoderContext = avcodec_alloc_context3(sys->codecDecoder);
+-
+-		if (!sys->codecDecoderContext)
++		const char* want = getenv("FREERDP_H264_V4L2M2M");
++		BOOL v4l2m2m = want && (strcmp(want, "1") == 0);
++		if (v4l2m2m && !dot_open_decoder(h264, sys, TRUE))
+ 		{
+-			WLog_Print(h264->log, WLOG_ERROR, "Failed to allocate libav codec context");
+-			goto EXCEPTION;
++			WLog_Print(h264->log, WLOG_WARN,
++			           "h264_v4l2m2m: the hardware decoder didn't open; using software decoding");
++			v4l2m2m = FALSE;
+ 		}
+-
+-#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(59, 18, 100)
+-		if (sys->codecDecoder->capabilities & AV_CODEC_CAP_TRUNCATED)
+-		{
+-			sys->codecDecoderContext->flags |= AV_CODEC_FLAG_TRUNCATED;
+-		}
+-#endif
+-
+-#ifdef WITH_VAAPI
+-
+-		if (!sys->hwctx)
+-		{
+-			int ret =
+-			    av_hwdevice_ctx_create(&sys->hwctx, AV_HWDEVICE_TYPE_VAAPI, VAAPI_DEVICE, NULL, 0);
+-
+-			if (ret < 0)
+-			{
+-				WLog_Print(h264->log, WLOG_ERROR,
+-				           "Could not initialize hardware decoder, falling back to software: %s",
+-				           av_err2str(ret));
+-				sys->hwctx = NULL;
+-				goto fail_hwdevice_create;
+-			}
+-		}
+-		WLog_Print(h264->log, WLOG_INFO, "Using VAAPI for accelerated H264 decoding");
+-
+-		sys->codecDecoderContext->get_format = libavcodec_get_format;
+-		sys->hw_pix_fmt = AV_PIX_FMT_VAAPI;
+-#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 80, 100)
+-		sys->codecDecoderContext->hw_device_ctx = av_buffer_ref(sys->hwctx);
+-#endif
+-		sys->codecDecoderContext->opaque = (void*)h264;
+-	fail_hwdevice_create:
+-#endif
+-
+-		if (avcodec_open2(sys->codecDecoderContext, sys->codecDecoder, NULL) < 0)
++		if (v4l2m2m)
++			WLog_Print(h264->log, WLOG_INFO, "Using h264_v4l2m2m (hardware) for H.264 decoding");
++		else if (!dot_open_decoder(h264, sys, FALSE))
+ 		{
+ 			WLog_Print(h264->log, WLOG_ERROR, "Failed to open libav codec");
+ 			goto EXCEPTION;

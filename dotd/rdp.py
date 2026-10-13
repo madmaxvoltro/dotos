@@ -15,6 +15,9 @@ import time
 
 from . import kiosk, system
 
+# FreeRDP built by `sudo dot hwdecode` with Dot's patch for the Pi's hardware H.264 decoder
+HW_FREERDP = "/opt/dot/freerdp"
+
 INBOX = os.environ.get("DOT_INBOX", "/run/dot/inbox")  # shared into Windows as \\tsclient\dot
 
 # preference order: native Wayland first, X11 (through Xwayland) as fallback
@@ -66,10 +69,18 @@ EXIT_CODES = {
 NORMAL_EXITS = {0, 1, 2, 12}  # success, disconnect, logoff, disconnect-by-user
 
 
-def find_client(preference="auto"):
+def hw_built():
+    return system.DEV or os.path.exists(f"{HW_FREERDP}/bin/xfreerdp")
+
+
+def find_client(preference="auto", hw=False):
     if system.DEV:
+        if hw:
+            return {"bin": f"{HW_FREERDP}/bin/xfreerdp", "major": 3, "hw": True}
         return {"bin": "xfreerdp3" if preference != "sdl" else "sdl-freerdp3", "major": 3}
     has_x11 = "DISPLAY" in kiosk.env()  # sway's Xwayland; without it the X11 client can't open a window
+    if hw and has_x11 and hw_built():
+        return {"bin": f"{HW_FREERDP}/bin/xfreerdp", "major": 3, "hw": True}
     for name in CLIENTS.get(preference, CLIENTS["auto"]) + CLIENTS["auto"]:
         path = shutil.which(name)
         if not path or (name.startswith("xfreerdp") and not has_x11):
@@ -167,6 +178,10 @@ def _popen(client, args, quiet=False):
     v3 = client["major"] >= 3
     cmd = [client["bin"], "/args-from:stdin"] if v3 else [client["bin"], *args]
     env = kiosk.env()
+    if client.get("hw"):
+        env["FREERDP_H264_V4L2M2M"] = "1"  # Dot's patch: decode H.264 with the Pi's hardware decoder
+        env["LD_LIBRARY_PATH"] = f"{HW_FREERDP}/lib"
+        env["WLOG_FILTER"] = "com.freerdp.codec:INFO"  # "Using h264_v4l2m2m" / why it fell back, in the log
     if quiet and "sdl" in os.path.basename(client["bin"]):
         env["SDL_VIDEODRIVER"] = "dummy"
     proc = kiosk.popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)

@@ -430,6 +430,9 @@ export function preferencesPanel(root, { connection = true, device = true } = {}
           ${seg("rdp.graphics", rdp.graphics === "light" ? "auto" : rdp.graphics || "auto", [["auto", "Smooth"], ["sharp", "Sharp"], ["compatible", "Compatible"]])}</div>
         <div class="setting"><div class="grow"><div class="t">Remote Desktop client</div><div class="s">Auto uses FreeRDP's X11 client. Try SDL if Windows looks wrong or won't connect.</div></div>
           ${seg("rdp.client", rdp.client || "auto", [["auto", "Auto"], ["x11", "X11"], ["sdl", "SDL"]])}</div>
+        <div class="setting"><div class="grow"><div class="t">Hardware video decoding</div><div class="s">${store.state?.hwDecodeBuilt
+          ? "Experimental. The Pi's video decoder does the work instead of its processor (Smooth only). From the next sign-in."
+          : "Experimental. Needs a one-time build first: over SSH, run sudo dot hwdecode (about 45 minutes)."}</div></div>${switchEl("rdp.hwDecode", rdp.hwDecode, "Hardware video decoding")}</div>
         <div class="setting"><div class="grow"><div class="t">Detailed log</div><div class="s">FreeRDP writes everything it does to Dot's log (About → Show Dot's log). For finding problems.</div></div>${switchEl("rdp.debugLog", rdp.debugLog, "Detailed log")}</div>
         <div class="setting"><div class="grow"><div class="t">USB drives</div><div class="s">Sticks plugged into the Pi show up on the server.</div></div>${switchEl("rdp.usbDrives", rdp.usbDrives, "USB drives")}</div>
       </div>` : ""}

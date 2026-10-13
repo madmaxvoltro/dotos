@@ -31,7 +31,7 @@ class Dot:
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.client = rdp.find_client(cfg.get()["rdp"].get("client", "auto"))
+        self.client = rdp.find_client(cfg.get()["rdp"].get("client", "auto"), cfg.get()["rdp"].get("hwDecode", False))
         self.boot_time = time.time()
         self.network = system.network_status()
         self.tailscale = system.tailscale_status()
@@ -121,7 +121,9 @@ class Dot:
             "features": cfg["features"],
             "bluetooth": self.bluetooth.status(),
             "games": {**self.games.status(), **{k: v for k, v in cfg["games"].items() if k != "hosts"}},
-            "client": {"name": os.path.basename(self.client["bin"]), "major": self.client["major"]} if self.client else None,
+            "client": {"name": os.path.basename(self.client["bin"]), "major": self.client["major"],
+                       "hw": bool(self.client.get("hw"))} if self.client else None,
+            "hwDecodeBuilt": rdp.hw_built(),
             "session": session,
             "connecting": self.connecting,
             "lastEnd": self.last_end,
@@ -158,7 +160,8 @@ class Dot:
         profile = self.cfg.profile(profile_id)
         if not profile:
             return {"ok": False, "error": "unknown"}
-        self.client = rdp.find_client(self.cfg.get()["rdp"].get("client", "auto"))  # Settings may have changed it
+        rdp_cfg = self.cfg.get()["rdp"]  # Settings may have changed it
+        self.client = rdp.find_client(rdp_cfg.get("client", "auto"), rdp_cfg.get("hwDecode", False))
         if not self.client:
             return {"ok": False, "error": "noclient"}
         if not self.login_lock.acquire(blocking=False):
