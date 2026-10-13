@@ -423,6 +423,9 @@ export function preferencesPanel(root, { connection = true, device = true } = {}
         <div class="setting"><div class="grow"><div class="t">Sound</div><div class="s">Play the server's audio through this Dot.</div></div>${switchEl("rdp.sound", rdp.sound, "Sound")}</div>
         <div class="setting"><div class="grow"><div class="t">Microphone</div><div class="s">For calls on the server.</div></div>${switchEl("rdp.microphone", rdp.microphone, "Microphone")}</div>
         <div class="setting"><div class="grow"><div class="t">Clipboard</div></div>${switchEl("rdp.clipboard", rdp.clipboard, "Clipboard")}</div>
+        <div class="setting"><div class="grow"><div class="t">Remote Desktop client</div><div class="s">Auto uses FreeRDP's X11 client. Try SDL if Windows looks wrong or won't connect.</div></div>
+          ${seg("rdp.client", rdp.client || "auto", [["auto", "Auto"], ["x11", "X11"], ["sdl", "SDL"]])}</div>
+        <div class="setting"><div class="grow"><div class="t">Detailed log</div><div class="s">FreeRDP writes everything it does to Dot's log (About → Show Dot's log). For finding problems.</div></div>${switchEl("rdp.debugLog", rdp.debugLog, "Detailed log")}</div>
         <div class="setting"><div class="grow"><div class="t">USB drives</div><div class="s">Sticks plugged into the Pi show up on the server.</div></div>${switchEl("rdp.usbDrives", rdp.usbDrives, "USB drives")}</div>
       </div>` : ""}
       ${device ? html`<span class="label ${connection ? "section-gap" : ""}" style="margin-bottom:-4px">This Dot</span>

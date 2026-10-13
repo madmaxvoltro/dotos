@@ -301,7 +301,7 @@ class Displays:
         def walk(node):
             name = (node.get("name") or "").lower()
             app = (node.get("app_id") or (node.get("window_properties") or {}).get("class") or "").lower()
-            if node.get("pid") and ("dot session" in name or "freerdp" in app or "freerdp" in name):
+            if node.get("pid") and ("dot session" in name or "freerdp" in app or "freerdp" in name or "dot-session" in app):
                 found.append(node["id"])
             for child in node.get("nodes", []) + node.get("floating_nodes", []):
                 walk(child)

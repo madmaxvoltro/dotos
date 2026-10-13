@@ -31,7 +31,7 @@ class Dot:
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.client = rdp.find_client()
+        self.client = rdp.find_client(cfg.get()["rdp"].get("client", "auto"))
         self.boot_time = time.time()
         self.network = system.network_status()
         self.tailscale = system.tailscale_status()
@@ -157,6 +157,7 @@ class Dot:
         profile = self.cfg.profile(profile_id)
         if not profile:
             return {"ok": False, "error": "unknown"}
+        self.client = rdp.find_client(self.cfg.get()["rdp"].get("client", "auto"))  # Settings may have changed it
         if not self.client:
             return {"ok": False, "error": "noclient"}
         if not self.login_lock.acquire(blocking=False):

@@ -18,7 +18,13 @@ from . import kiosk, system
 INBOX = os.environ.get("DOT_INBOX", "/run/dot/inbox")  # shared into Windows as \\tsclient\dot
 
 # preference order: native Wayland first, X11 (through Xwayland) as fallback
-CLIENTS = ["sdl-freerdp3", "sdl-freerdp", "wlfreerdp3", "xfreerdp3", "wlfreerdp", "xfreerdp"]
+# FreeRDP's X11 client is the mature one (it runs on sway's Xwayland); the SDL client is marked
+# experimental by FreeRDP itself and stalled after sign-in on a Pi 4. Settings > Connection can choose.
+CLIENTS = {
+    "auto": ["xfreerdp3", "sdl-freerdp3", "wlfreerdp3", "xfreerdp", "sdl-freerdp", "wlfreerdp"],
+    "x11": ["xfreerdp3", "xfreerdp"],
+    "sdl": ["sdl-freerdp3", "sdl-freerdp"],
+}
 
 QUALITY = {
     "auto": ["/network:auto"],
@@ -60,12 +66,13 @@ EXIT_CODES = {
 NORMAL_EXITS = {0, 1, 2, 12}  # success, disconnect, logoff, disconnect-by-user
 
 
-def find_client():
+def find_client(preference="auto"):
     if system.DEV:
-        return {"bin": "sdl-freerdp3", "major": 3}
-    for name in CLIENTS:
+        return {"bin": "xfreerdp3" if preference != "sdl" else "sdl-freerdp3", "major": 3}
+    has_x11 = "DISPLAY" in kiosk.env()  # sway's Xwayland; without it the X11 client can't open a window
+    for name in CLIENTS.get(preference, CLIENTS["auto"]) + CLIENTS["auto"]:
         path = shutil.which(name)
-        if not path:
+        if not path or (name.startswith("xfreerdp") and not has_x11):
             continue
         code, out, err = system.run([path, "--version"], timeout=5)
         m = re.search(r"version (\d+)\.", out + err)
@@ -118,11 +125,13 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
         if domain:
             args.append(f"/gd:{domain}")
     args += cert_args(client, fingerprint)
-    args.append("/log-level:ERROR")
+    args.append("/log-level:INFO" if (rdp.get("debugLog") and not auth_only) else "/log-level:ERROR")
     if auth_only:
         args.append("/auth-only" if v3 else "+auth-only")
         return args
     args += ["/f", "/gfx", "/title:Dot Session"]
+    if "xfreerdp" in os.path.basename(client["bin"]):
+        args.append("/wm-class:dot-session")  # X11 only; sway's window rules match it
     args += QUALITY.get(rdp.get("quality"), QUALITY["auto"])
     args.append("/auto-reconnect" if v3 else "+auto-reconnect")
     args.append("/auto-reconnect-max-retries:20")
