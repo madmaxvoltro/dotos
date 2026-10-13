@@ -222,6 +222,7 @@ class Dot:
                                    fingerprint=fingerprint)
         if not single:
             self.displays.session_started(cfg["screen"]["mode"])
+        threading.Thread(target=self.displays.raise_session, daemon=True).start()
 
     def reconnect(self, single=False):
         """Back into Windows with the password from memory (after game mode, or onto monitor 2 during it)."""
@@ -366,6 +367,8 @@ def make_handler(dot: Dot, ui_dir: str):
                 if not dot.admin_ok(self.headers.get("X-Dot-Admin", "")):
                     return self.send_json({"error": "locked"}, 403)
                 return self.send_json({"lines": system.logs(), "lastError": dot.last_error})
+            if url.path == "/api/session/log":
+                return self.send_json({"lines": dot.session.output if dot.session else []})
             if url.path == "/api/update":
                 return self.send_json(system.update_progress())
             if url.path == "/api/info":
@@ -393,6 +396,12 @@ def make_handler(dot: Dot, ui_dir: str):
                 return self.send_json(dot.login(data.get("profileId"), data.get("serverId"), data.get("password", ""),
                                                 game=bool(data.get("game")), accept_cert=data.get("acceptCert"),
                                                 remember_cert=bool(data.get("rememberCert"))))
+            if path == "/api/session/show":
+                return self.send_json({"ok": dot.displays.raise_session(wait=3)})
+            if path == "/api/session/disconnect":
+                if dot.session:
+                    dot.session.stop("signed_out")  # Windows keeps the session; sign in again to carry on
+                return self.send_json({"ok": True})
             if path == "/api/reconnect":
                 return self.send_json({"ok": dot.reconnect_after_drop()})
             if path == "/api/games/stop":

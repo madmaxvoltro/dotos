@@ -293,6 +293,39 @@ class Displays:
             if o["active"] and o["name"] != main["name"]:
                 swaymsg(f"exec wl-mirror --fullscreen-output {o['name']} {main['name']}", raw=True)
 
+    def session_windows(self):
+        """con ids of FreeRDP's windows (title "Dot Session", or an app id / class naming FreeRDP)."""
+        tree = swaymsg("-t", "get_tree", "-r") or {}
+        found = []
+
+        def walk(node):
+            name = (node.get("name") or "").lower()
+            app = (node.get("app_id") or (node.get("window_properties") or {}).get("class") or "").lower()
+            if node.get("pid") and ("dot session" in name or "freerdp" in app or "freerdp" in name):
+                found.append(node["id"])
+            for child in node.get("nodes", []) + node.get("floating_nodes", []):
+                walk(child)
+
+        walk(tree)
+        return found
+
+    def raise_session(self, wait=20):
+        """Put the session in front: Dot's own screen is a full-screen window too, and sway keeps a
+        full-screen window on top, so FreeRDP could otherwise open behind it."""
+        if DEV:
+            return True
+        end = time.time() + wait
+        while time.time() < end:
+            ids = self.session_windows()
+            if ids:
+                for cid in ids:
+                    swaymsg(f"[con_id={cid}] fullscreen enable, focus", raw=True)
+                print(f"displays: session window{'s' if len(ids) > 1 else ''} brought to the front", flush=True)
+                return True
+            time.sleep(0.5)
+        print("displays: no session window appeared", flush=True)
+        return False
+
     def session_ended(self):
         swaymsg('[app_id="at.yrlf.wl_mirror"] kill', raw=True)
 

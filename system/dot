@@ -53,6 +53,20 @@ case "${1:-diag}" in
       ports
       h "What Dot sees (monitors, standby)"
       json '{"monitor": d["monitor"], "standby settings": d["screen"] | {}, "outputs": [{k: o.get(k) for k in ("name","label","mode","edid","detectedMode","main")} for o in d["displays"]["outputs"]]}'
+      h "Windows on screen"
+      uid=$(id -u dot 2>/dev/null)
+      sock=$(sed -n 's/^SWAYSOCK=//p' "/run/user/$uid/dot-session.env" 2>/dev/null)
+      if [ -n "$sock" ]; then
+        runuser -u dot -- env SWAYSOCK="$sock" swaymsg -t get_tree -r 2>/dev/null | python3 -c "
+import json, sys
+def walk(n, out):
+    if n.get('pid'):
+        out.append('  %-34s app %-28s fullscreen %s  visible %s  focused %s' % ((n.get('name') or '')[:34], (n.get('app_id') or (n.get('window_properties') or {}).get('class') or '')[:28], n.get('fullscreen_mode'), n.get('visible'), n.get('focused')))
+    for c in n.get('nodes', []) + n.get('floating_nodes', []): walk(c, out)
+out = []; walk(json.load(sys.stdin), out); print('\n'.join(out) or '  (none)')"
+      else
+        echo "  the screen session isn't running"
+      fi
       h "I2C"
       ls /dev/i2c-* 2>/dev/null | tr '\n' ' '; echo
       lsmod | grep -q i2c_dev && echo "  i2c-dev loaded" || echo "  i2c-dev NOT loaded (sudo modprobe i2c-dev)"

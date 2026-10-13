@@ -1,6 +1,7 @@
 // Boot, idle clock and the in-session backdrop.
 
-import { $, api, bind, html, icon, mount, refresh, store, watch } from "./lib.js";
+import { $, api, bind, html, icon, mount, refresh, store, toast, watch } from "./lib.js";
+import { detailsModal } from "./parts.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -145,7 +146,21 @@ export function session(root) {
     if (!st) return;
     const sid = st.session?.serverId || st.connecting?.serverId;
     const name = st.servers.find((s) => s.id === sid)?.name || "the server";
-    mount(root, html`<div class="screen session"><div class="mark"></div><div class="msg">${st.session ? `Signed in to ${name}` : `Connecting to ${name}`}</div></div>`);
+    mount(root, html`<div class="screen session"><div class="mark"></div><div class="msg">${st.session ? `Signed in to ${name}` : `Connecting to ${name}`}</div>
+      ${st.session ? html`<p class="small" style="margin:-8px 0 0;max-width:420px;text-align:center;line-height:1.5">Windows should be on screen now. If you can see this instead:</p>
+      <div class="row">
+        <button class="btn btn-raised" data-on-click="show">Show Windows</button>
+        <button class="btn btn-ghost" data-on-click="details">Details</button>
+        <button class="btn btn-ghost btn-danger" data-on-click="disconnect">Disconnect</button>
+      </div>` : ""}</div>`);
+    bind(root, {
+      show: async () => { const r = await api("/api/session/show", {}); if (!r.ok) toast("No Remote Desktop window found. Details shows what FreeRDP said."); },
+      details: async () => {
+        const { lines = [] } = await api("/api/session/log");
+        detailsModal("Remote Desktop (FreeRDP)", lines.join("\n") || "FreeRDP hasn't said anything yet.");
+      },
+      disconnect: () => api("/api/session/disconnect", {}),
+    });
   };
   render(store.state);
   return watch((st) => [st.session?.serverId, st.connecting?.serverId], render);

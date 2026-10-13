@@ -198,6 +198,7 @@ class Session:
         self.stop_reason = None
         self.expected = None  # an ending Dot asked for (game mode taking the session over)
         self.single = single
+        self.output = []  # FreeRDP's last lines, for the session screen's Details
         if system.DEV:
             self.proc = None
             threading.Thread(target=self._dev_wait, daemon=True).start()
@@ -207,8 +208,15 @@ class Session:
         threading.Thread(target=self._wait, daemon=True).start()
 
     def _wait(self):
-        out = self.proc.stdout.read() if self.proc.stdout else ""
+        # line by line, so a session that's stuck connecting shows why in Dot's log right away
+        for line in self.proc.stdout or ():
+            line = line.rstrip()
+            if line:
+                self.output = (self.output + [line])[-80:]
+                print(f"freerdp: {line}", flush=True)
+        out = "\n".join(self.output)
         code = self.proc.wait()
+        print(f"freerdp: exited with code {code}", flush=True)
         if self.stop_reason or self.expected:
             self.on_end(self.stop_reason or self.expected, "")
         elif code in NORMAL_EXITS:
