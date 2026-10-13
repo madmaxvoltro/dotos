@@ -326,6 +326,25 @@ class Displays:
         print("displays: no session window appeared", flush=True)
         return False
 
+    def follow_session(self, alive, first_wait=180):
+        """Bring each new FreeRDP window to the front for as long as the session runs. A first sign-in
+        (Windows building a new session) can take well over 20 seconds before FreeRDP opens its window,
+        and FreeRDP may open a new one once Windows has finished signing in."""
+        if DEV:
+            return
+        seen, start = set(), time.time()
+        while alive():
+            new = [cid for cid in self.session_windows() if cid not in seen]
+            if new:
+                for cid in new:
+                    swaymsg(f"[con_id={cid}] fullscreen enable, focus", raw=True)
+                seen.update(new)
+                print(f"displays: session window brought to the front after {time.time() - start:.0f} s", flush=True)
+            elif not seen and time.time() - start > first_wait:
+                print("displays: no session window appeared", flush=True)
+                return
+            time.sleep(0.5 if not seen else 1.5)
+
     def show_dot(self):
         """Dot's own screen in front of the session (the session menu)."""
         main = self.main()

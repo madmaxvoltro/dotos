@@ -237,7 +237,8 @@ class Dot:
                                    fingerprint=fingerprint)
         if not single:
             self.displays.session_started(cfg["screen"]["mode"])
-        threading.Thread(target=self.displays.raise_session, daemon=True).start()
+        s = self.session
+        threading.Thread(target=self.displays.follow_session, args=(lambda: self.session is s,), daemon=True).start()
 
     def reconnect(self, single=False):
         """Back into Windows with the password from memory (after game mode, or onto monitor 2 during it)."""
