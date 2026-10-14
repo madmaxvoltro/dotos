@@ -71,3 +71,21 @@ addEventListener("mousemove", (e) => {
 addEventListener("gamepadconnected", (e) => { pad.type = typeOf(e.gamepad.id); pad.name = e.gamepad.id; });
 document.body.dataset.input = "keys";
 poll();
+
+// Button icons by position, the same on every controller: four face buttons in a diamond with the one meant
+// filled in (a bottom, b right, x left, y top), and a D-pad with its direction(s) filled in.
+const FACE = { y: [11, 4.5], b: [17.5, 11], a: [11, 17.5], x: [4.5, 11] };
+const ARMS = { up: 0, right: 90, down: 180, left: 270 };
+const DPAD = { up: ["up"], down: ["down"], left: ["left"], right: ["right"], updown: ["up", "down"], leftright: ["left", "right"] };
+
+export function padIcon(name, size = 22) {
+  const svg = (inner) => `<svg class="padicon" width="${size}" height="${size}" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+  if (FACE[name]) {
+    return svg(Object.entries(FACE).map(([b, [x, y]]) => `<circle cx="${x}" cy="${y}" r="3.1" ${b === name ? 'fill="currentColor"' : ""}/>`).join(""));
+  }
+  if (DPAD[name]) {
+    return svg(Object.entries(ARMS).map(([arm, deg]) =>
+      `<path d="M8.5 1.5h5v4.6L11 8.6 8.5 6.1z" transform="rotate(${deg} 11 11)" ${DPAD[name].includes(arm) ? 'fill="currentColor"' : ""}/>`).join(""));
+  }
+  return `<b class="padkey">${pad.glyph(name)}</b>`;  // Start, Select, shoulders: their label
+}

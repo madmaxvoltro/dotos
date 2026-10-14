@@ -128,6 +128,7 @@ export function screenPanel(root) {
         <div class="setting"><div class="grow"><div class="t">Mute the monitors' speakers</div><div class="s">Puts the volume back where it was afterwards.</div></div>${switchEl("screen.muteMonitor", s.muteMonitor, "Mute the monitors' speakers")}</div>
         <div class="setting"><div class="grow"><div class="t">Disconnect USB devices</div><div class="s" id="usbline">The system disk and network adapters are always kept.</div></div>${switchEl("screen.usb", s.usb, "Disconnect USB devices")}</div>
         ${s.usb ? html`<div class="setting"><div class="grow"><div class="t">Including keyboard and mouse</div><div class="s">The monitor's power button becomes the only way to wake Dot. Run Test standby once to be sure it comes back.</div></div>${switchEl("screen.inputs", s.inputs, "Including keyboard and mouse")}</div>` : ""}
+        ${s.usb ? html`<div class="setting"><div class="grow"><div class="t">Power off the USB ports</div><div class="s">So keyboards and mice really go dark, lights included. Skipped when Dot itself runs from a USB disk: a Pi 4 switches all its USB ports together.</div></div>${switchEl("screen.usbPower", s.usbPower !== false, "Power off the USB ports")}</div>` : ""}
       </div>
       <div class="setting"><div class="grow"><div class="t">Wait before acting</div><div class="s">Ignores quick flickers and input switches.</div></div>
         ${seg("screen.delay", s.delay, [[2, "2 s"], [5, "5 s"], [15, "15 s"], [60, "1 min"]])}</div>

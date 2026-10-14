@@ -47,6 +47,7 @@ DEFAULTS = {
         "muteMonitor": True,
         "usb": True,
         "inputs": True,  # keyboard and mouse too: the monitor's button wakes Dot
+        "usbPower": True,  # also cut the USB ports' power (uhubctl), so keyboard lights go off too
         "mode": "extend",  # extend | main | mirror: how Windows sees several monitors
         "winScale": "auto",  # Windows scaling in the session: auto | 100 | 125 | 150 | 175 | 200
         "main": None,  # sway identifier of the main monitor

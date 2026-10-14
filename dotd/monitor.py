@@ -14,6 +14,7 @@ import json
 import os
 import re
 import select
+import shutil
 import struct
 import threading
 import time
@@ -235,6 +236,31 @@ def usb_devices():
     return devices
 
 
+def usb_port(device_id):
+    """(hub, port) for uhubctl: "1-1.3" is port 3 of hub 1-1."""
+    hub, _, port = device_id.rpartition(".")
+    if not hub:
+        bus, _, port = device_id.partition("-")
+        hub = bus
+    return (hub, port) if port.isdigit() else None
+
+
+def usb_power_safe(devices):
+    """Cutting a port's power is only safe when nothing Dot needs is on USB at all: a Pi 4's ports
+    switch together, so one port off is every port off (the system disk too, if it's a USB disk)."""
+    return shutil.which("uhubctl") is not None and not any(d["protected"] for d in devices)
+
+
+def usb_set_power(hub, port, on):
+    if DEV:
+        print(f"[dev] usb power {hub} port {port} {'on' if on else 'off'}", flush=True)
+        return True
+    code, _, err = system.run(["uhubctl", "-l", hub, "-p", port, "-a", "on" if on else "off"], timeout=15)
+    if code != 0:
+        print(f"monitor: uhubctl {hub} {port}: {err.strip()}", flush=True)
+    return code == 0
+
+
 def usb_set_authorized(device_id, on):
     if DEV:
         print(f"[dev] usb {device_id} {'connect' if on else 'disconnect'}", flush=True)
@@ -432,16 +458,24 @@ class Monitor:
         if s["usb"]:
             # inputs only go when the off signal is explicit, so a quiet monitor can't lock anyone out
             take_inputs = s["inputs"] and explicit
-            for dev in usb_devices():
+            devices = usb_devices()
+            for dev in devices:
                 if dev["protected"] or (dev["kind"] == "input" and not take_inputs):
                     continue
                 if usb_set_authorized(dev["id"], False):
                     snap["usb"].append(dev["id"])
+            # and their ports' power, so they really go dark (a keyboard's lights)
+            snap["usbPower"] = []
+            if s.get("usbPower", True) and snap["usb"] and usb_power_safe(devices):
+                for hub_port in sorted({usb_port(d) for d in snap["usb"]} - {None}):
+                    if usb_set_power(*hub_port, False):
+                        snap["usbPower"].append(list(hub_port))
         self.snapshot = snap
         self._save(snap)
         if s["session"] == "lock":
             self.lock_session()
-        print(f"monitor: standby ({source}), unplugged {len(snap['usb'])} USB devices", flush=True)
+        print(f"monitor: standby ({source}), unplugged {len(snap['usb'])} USB devices"
+              + (f", powered off {len(snap['usbPower'])} USB ports" if snap.get("usbPower") else ""), flush=True)
 
     def leave_standby(self):
         snap = self.snapshot
@@ -452,6 +486,10 @@ class Monitor:
         print("monitor: resumed", flush=True)
 
     def _restore(self, snap):
+        for hub, port in snap.get("usbPower", []):
+            usb_set_power(hub, port, True)  # they come back as new devices, allowed again
+        if snap.get("usbPower"):
+            time.sleep(1.5)
         for dev_id in snap.get("usb", []):
             usb_set_authorized(dev_id, True)
         if snap.get("piMuted") is not None:

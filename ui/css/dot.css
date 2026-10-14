@@ -267,8 +267,10 @@ button.item:hover, .item.on { background: var(--raised); }
 .padhints { position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%); display: flex; gap: 18px; padding: 8px 16px; border-radius: 999px; background: rgba(28,28,30,.92); font-size: 13px; }
 .padhints[hidden] { display: none; }
 .padhints span { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
-.padhints b { min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box; border-radius: 11px; border: 1.5px solid rgba(255,255,255,.8); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
-.padhints b.on { background: #fff; color: #000; border-color: #fff; }
+.padhints .padicon { flex-shrink: 0; color: rgba(255,255,255,.85); }
+.padhints .on .padicon { color: #fff; }
+.padhints .padkey { min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box; border-radius: 7px; border: 1.4px solid rgba(255,255,255,.8); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+.pinhints { position: static; transform: none; margin: 14px auto 0; width: fit-content; background: var(--raised); }
 body[data-input="pad"] { cursor: none; }
 
 /* the game mode PIN pad: one digit at a time, changed with up/down */

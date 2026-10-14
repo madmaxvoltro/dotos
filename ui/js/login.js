@@ -2,7 +2,7 @@
 
 import { $, api, bind, clock, html, icon, initial, latencyText, mount, notice, raw, refresh, shortDate, store, toast, watch } from "./lib.js";
 import { ACCOUNT_ERRORS, detailsModal, modal, setVolume, soundPanel, switchEl, volumeIcon, wifiPanel } from "./parts.js";
-import { pad } from "./pad.js";
+import { pad, padIcon } from "./pad.js";
 
 export function login(root, { go }) {
   const st0 = store.state;
@@ -141,7 +141,7 @@ export function login(root, { go }) {
     const m = modal(html`<h2 class="title" style="font-size:22px;text-align:center">Game mode PIN</h2>
       <div class="pinpad" id="pinpad"></div>
       <p class="small" id="pinmsg" style="text-align:center;min-height:18px"></p>
-      <p class="small" style="text-align:center;color:var(--muted)">▲ ▼ change · ◀ ▶ move · ${pad.glyph("a")} start · ${pad.glyph("b")} cancel</p>`);
+      <div class="padhints pinhints">${raw(`<span>${padIcon("updown")}Change</span><span>${padIcon("leftright")}Move</span><span class="on">${padIcon("a")}Start</span><span>${padIcon("b")}Cancel</span>`)}</div>`);
     const draw = () => {
       mount($("#pinpad", m.el), html`${digits.map((d, i) => html`<div class="pindigit ${i === at ? "on" : ""}">
         <span class="arrow">${i === at ? "▲" : ""}</span><b>${i === at ? d : "•"}</b><span class="arrow">${i === at ? "▼" : ""}</span></div>`)}`);
@@ -426,7 +426,7 @@ export function login(root, { go }) {
   function renderPadHints() {
     const el = $("#padhints", root);
     if (!pad.active) { el.hidden = true; return; }
-    const g = (b, label, primary) => `<span><b class="${primary ? "on" : ""}">${pad.glyph(b)}</b>${label}</span>`;
+    const g = (b, label, primary) => `<span class="${primary ? "on" : ""}">${padIcon(b)}${label}</span>`;
     el.hidden = false;
     el.innerHTML = [
       gameReady() ? g("y", ui.game ? "Game mode on" : "Game mode", true) : "",
