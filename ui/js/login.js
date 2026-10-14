@@ -2,6 +2,7 @@
 
 import { $, api, bind, clock, html, icon, initial, latencyText, mount, notice, raw, refresh, shortDate, store, toast, watch } from "./lib.js";
 import { ACCOUNT_ERRORS, detailsModal, modal, setVolume, soundPanel, switchEl, volumeIcon, wifiPanel } from "./parts.js";
+import { pad } from "./pad.js";
 
 export function login(root, { go }) {
   const st0 = store.state;
@@ -49,6 +50,7 @@ export function login(root, { go }) {
       <button class="chev" aria-label="Show options" aria-expanded="false" data-on-click="tray" id="chev">${icon("chevLeft", 16, 2.2)}</button>
     </div>
     <div id="people-layer"></div>
+    <div class="padhints" id="padhints"></div>
   </div>`);
 
   const handlers = {
@@ -342,7 +344,34 @@ export function login(root, { go }) {
   window.addEventListener("keydown", onKey);
   cleanups.push(() => window.removeEventListener("keydown", onKey));
 
-  renderWho(); renderNotices(); renderBusy(); renderDock(); renderPeople();
+  // with a controller: button hints, Y for game mode, X for another person, A to sign in, B to close
+  function renderPadHints() {
+    const el = $("#padhints", root);
+    if (!pad.active) { el.hidden = true; return; }
+    const g = (b, label, primary) => `<span><b class="${primary ? "on" : ""}">${pad.glyph(b)}</b>${label}</span>`;
+    el.hidden = false;
+    el.innerHTML = [
+      gameReady() ? g("y", ui.game ? "Game mode on" : "Game mode", true) : "",
+      store.state.profiles.length > 1 ? g("x", "Other user") : "",
+      g("a", ui.game ? "Sign in and play" : "Sign in"),
+      g("start", "Power"),
+    ].join("");
+  }
+  cleanups.push(pad.onMode(renderPadHints));
+  cleanups.push(pad.on((b) => {
+    if (b === "y" && gameReady()) handlers.game();
+    else if (b === "x" && store.state.profiles.length > 1) handlers.people();
+    else if (b === "a" && $("#pw", root).value) signIn();
+    else if (b === "start") { ui.tray = true; renderDock(); togglePop("power"); }
+    else if (b === "b") {
+      if (ui.people && store.state.lastProfile) { ui.people = false; renderPeople(); }
+      else if (ui.popover) { ui.popover = null; renderPop(); }
+      else if (ui.game) handlers.game();
+    }
+    renderPadHints();
+  }));
+
+  renderWho(); renderNotices(); renderBusy(); renderDock(); renderPeople(); renderPadHints();
   $("#pw", root).focus();
   const timer = setInterval(renderDock, 1000);
   cleanups.push(() => clearInterval(timer));

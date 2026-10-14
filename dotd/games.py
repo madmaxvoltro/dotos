@@ -31,14 +31,23 @@ from . import kiosk, system
 DEV = system.DEV
 INBOX = os.environ.get("DOT_INBOX", "/run/dot/inbox")
 MOONLIGHT_BINARIES = ("moonlight-qt", "moonlight")
+# Dot Play (github.com/madmaxvoltro/dot-play): Moonlight with Dot's own launcher, installed by install.sh.
+# Its command line is Moonlight's (pair, list, stream, quit) and it shares Moonlight's pairing.
+DOT_PLAY = "/opt/dot/play/bin/dot-play"
 SUNSHINE_PORT = 47989  # Sunshine / Apollo HTTP port, used to see whether the PC is up
 FLOWS = ("off", "same", "other", "server")
 MONITOR2 = ("rdp", "browser", "panel", "clock", "off")
 
 
+def has_dot_play():
+    return DEV or os.access(DOT_PLAY, os.X_OK)
+
+
 def moonlight_bin():
     if DEV:
         return "moonlight-qt"
+    if has_dot_play():
+        return DOT_PLAY
     return next((shutil.which(b) for b in MOONLIGHT_BINARIES if shutil.which(b)), None)
 
 
@@ -101,6 +110,17 @@ class Moonlight:
             return None
         rows = list(csv.reader(io.StringIO(out)))
         return [r[0].strip() for r in rows[1:] if r and r[0].strip()]
+
+    def launcher(self, game=None):
+        """Dot Play's launcher on the main monitor; with a game name (Game.exe "Elden Ring"), straight into it.
+        Quitting Dot Play (B on Home, or Back to work in the game menu) ends game mode."""
+        env = kiosk.env()
+        if game:
+            env["DOT_PLAY_GAME"] = game
+        if DEV:
+            print(f"[dev] {DOT_PLAY}" + (f" (DOT_PLAY_GAME={game})" if game else ""), flush=True)
+            return None
+        return kiosk.popen([DOT_PLAY], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def stream(self, address, app, width, height, fps, codec, bitrate):
         cmd = [moonlight_bin(), "stream", address, app,
@@ -324,8 +344,13 @@ class Games:
             g = self.cfg.get()["games"]
             if g["fps"] != "max":
                 fps = int(g["fps"])
-            self._step(f"Starting {app}")
-            self.proc = self.moonlight.stream(t["address"], app, width, height, fps, g["codec"], g["bitrate"])
+            if has_dot_play():
+                # Dot Play picks the PC, the game and its stream profile itself
+                self._step("Opening Dot Play" if app == "Desktop" else f"Starting {app}")
+                self.proc = self.moonlight.launcher(None if app == "Desktop" else app)
+            else:
+                self._step(f"Starting {app}")
+                self.proc = self.moonlight.stream(t["address"], app, width, height, fps, g["codec"], g["bitrate"])
             with self.lock:
                 self.state = "playing"
                 self._step(f"{app} on {t['name']}")

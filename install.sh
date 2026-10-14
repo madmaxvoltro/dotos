@@ -263,6 +263,46 @@ else
   fi
 fi
 
+# Dot Play (game mode's launcher): a prebuilt bundle from github.com/madmaxvoltro/dot-play, with its own
+# Qt, in /opt/dot/play. Downloaded again only when there's a newer build; Moonlight stays as the fallback.
+install_dot_play() {
+  [ "$GAMES" -eq 1 ] || return 0
+  if [ "$(uname -m)" != aarch64 ]; then
+    info "Dot Play is built for 64-bit Raspberry Pi OS; game mode uses Moonlight instead"
+    return 0
+  fi
+  local latest base=https://github.com/madmaxvoltro/dot-play/releases/download/nightly tmp
+  latest=$(curl -fsSL https://api.github.com/repos/madmaxvoltro/dot-play/releases/tags/nightly 2>/dev/null \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin).get("target_commitish", ""))' 2>/dev/null)
+  if [ -z "$latest" ]; then
+    info "Couldn't reach Dot Play's downloads; keeping what's installed"
+    return 0
+  fi
+  if [ "$(cat /opt/dot/play/BUILD 2>/dev/null)" = "$latest" ]; then
+    info "Dot Play is up to date"
+    return 0
+  fi
+  step "Installing Dot Play (game mode)"
+  progress 74 "Installing Dot Play"
+  tmp=$(mktemp -d)
+  if ! curl -fsSL -o "$tmp/deps" "$base/dot-play-arm64.deps" || ! curl -fsSL -o "$tmp/play.tar.zst" "$base/dot-play-arm64.tar.zst"; then
+    info "Downloading Dot Play failed; keeping what's installed"
+    rm -rf "$tmp"
+    return 0
+  fi
+  # shellcheck disable=SC2046
+  apt-get install -y -q --no-install-recommends zstd $(cat "$tmp/deps") >/dev/null || info "Some of Dot Play's packages didn't install"
+  mkdir -p "$tmp/root"
+  tar --zstd -C "$tmp/root" -xf "$tmp/play.tar.zst"
+  rm -rf /opt/dot/play.old
+  [ -d /opt/dot/play ] && mv /opt/dot/play /opt/dot/play.old
+  mkdir -p /opt/dot
+  mv "$tmp/root/opt/dot/play" /opt/dot/play
+  rm -rf "$tmp" /opt/dot/play.old
+  info "Dot Play $(cut -c1-7 /opt/dot/play/BUILD)"
+}
+install_dot_play
+
 # code ------------------------------------------------------------------------------------------------
 
 step "Installing Dot"
