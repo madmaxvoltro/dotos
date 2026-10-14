@@ -158,8 +158,9 @@ def build_args(client, server, profile, password, cfg, auth_only=False, outputs=
         args.append("/clipboard" if v3 else "+clipboard")
     if rdp.get("usbDrives"):
         args.append("/drive:USB,/media/dot")
-    if (server.get("games") or {}).get("mode", "off") != "off":
-        args.append(f"/drive:dot,{INBOX}")  # Game.exe talks to Dot through this folder
+    # Game.exe and Dot Helper talk to Dot through this folder. Always shared, so Game.exe can say
+    # "game mode isn't set up for this PC" instead of "start it from a Dot".
+    args.append(f"/drive:dot,{INBOX}")
     active = [o for o in outputs if o.get("active")]
     if not single and screen.get("mode", "extend") == "extend" and len(active) > 1:
         args.append("/multimon")  # sends Windows each monitor's size, position and which one is primary
