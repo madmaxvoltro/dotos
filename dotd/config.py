@@ -63,6 +63,8 @@ DEFAULTS = {
         "codec": "auto",  # auto | HEVC | H.264 | AV1
         "bitrate": "auto",  # auto or Mbps
         "fps": "max",  # max (the main monitor's fastest refresh) or a number
+        "pinHash": None,  # game mode from the sign-in screen asks for this PIN (set in Settings › Games)
+        "pinLength": 4,
     },
     "tailscale": {"enabled": False},
     "features": {"gameMode": True},
@@ -143,6 +145,7 @@ class Config:
         """Config without the PIN hash, safe to hand to the UI."""
         data = self.get()
         data["device"]["hasPin"] = bool(data["device"].pop("adminPin", None))
+        data["games"].pop("pinHash", None)
         return data
 
     def mutate(self, fn):
@@ -256,7 +259,7 @@ class Config:
             for section, values in payload.items():
                 if section not in allowed or not isinstance(values, dict):
                     continue
-                values = {k: v for k, v in values.items() if k not in ("adminPin", "hosts")}
+                values = {k: v for k, v in values.items() if k not in ("adminPin", "hosts", "pinHash", "pinLength")}
                 d[section].update(values)
 
         self.mutate(fn)

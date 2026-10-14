@@ -265,6 +265,20 @@ def restart_kiosk():
         subprocess.Popen(["systemctl", "start", "dot-kiosk.service"])
 
 
+def open_terminal():
+    """A terminal (foot) on the Pi's screen as the kiosk user; `exit` closes it and Dot is back."""
+    if DEV:
+        print("[dev] terminal opened", flush=True)
+        return True
+    from . import kiosk
+    term = shutil.which("foot")
+    if not term or "WAYLAND_DISPLAY" not in kiosk.env():
+        return False
+    kiosk.popen([term, "--app-id=dot-terminal", "--title=Terminal", "--font=monospace:size=12"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True
+
+
 def set_timezone(tz):
     if tz and not DEV:
         run(["timedatectl", "set-timezone", tz])

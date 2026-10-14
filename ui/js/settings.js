@@ -123,7 +123,7 @@ export function settings(root, { go, token }) {
         const st = store.state;
         const row = (k, v) => html`<div class="setting"><div class="grow"><div class="t">${k}</div></div><div class="small mono">${v}</div></div>`;
         mount(body, html`<div class="group">
-          ${row("Dot", info.version)}
+          <div class="setting" data-on-click="secret" style="cursor:default"><div class="grow"><div class="t">Dot</div></div><div class="small mono">${info.version}</div></div>
           ${row("Device", info.model)}
           ${row("Name", info.hostname)}
           ${row("IP address", st.network.ip || "Not connected")}
@@ -137,8 +137,22 @@ export function settings(root, { go, token }) {
           <button class="btn btn-raised" data-on-click="reboot">${icon("restart", 16)} Restart</button>
           <button class="btn btn-raised" data-on-click="logs">Show Dot's log</button>
           <button class="btn btn-ghost btn-danger" data-on-click="reset">Run setup again</button>
+        </div>
+        <div id="terminal" hidden class="group section-gap">
+          <div class="setting"><div class="grow"><div class="t">Terminal</div><div class="s">A terminal on this screen, as Dot's screen user (dot). <span class="mono">su - yourname</span> for your own account and sudo. Type <span class="mono">exit</span> to come back here.</div></div>
+          <button class="btn btn-raised" data-on-click="terminal">Open terminal</button></div>
         </div>`);
+        let taps = 0;
         bind(body, {
+          // the version, tapped 5 times: the terminal (Android's "developer options" trick)
+          secret: () => {
+            taps += 1;
+            if (taps === 5) { $("#terminal", body).hidden = false; toast("Terminal unlocked"); }
+          },
+          terminal: async () => {
+            const res = await api("/api/terminal", {});
+            if (!res.ok) toast("No terminal yet: update Dot to install it (sudo dot update).");
+          },
           logs: async () => {
             const res = await api("/api/logs");
             const last = res.lastError ? `Last sign-in problem (${res.lastError.server}, ${res.lastError.error}):\n${res.lastError.details || "no details"}\n\n` : "";

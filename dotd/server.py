@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import audio, bluetooth, cert, displays, games, monitor, rdp, system
-from .config import Config, account_for
+from .config import Config, account_for, check_pin, hash_pin
 
 def _version():
     try:
@@ -46,6 +46,8 @@ class Dot:
         self.connecting = None  # {"profileId", "serverId"} while signing in
         self.last_end = None
         self.admin_tokens = {}
+        self.pin_failures = 0  # wrong game-mode PINs in a row
+        self.pin_lock_until = 0
         self.login_lock = threading.Lock()
         self.displays = displays.Displays(cfg)
         self.monitor = monitor.Monitor(cfg, self.lock_session, lambda: (self.displays.main() or {}).get("name"))
@@ -91,6 +93,43 @@ class Dot:
         self.admin_tokens[token] = time.time() + ADMIN_TTL
         return token
 
+    # game mode from the sign-in screen ---------------------------------------
+
+    def game_needs_password(self, server_id):
+        """Game mode needs the Windows password only when Windows stays on the second screen while
+        you play (Settings › Games › second monitor: Windows, and a second monitor connected)."""
+        flow = self.games.flow(server_id)
+        return (flow in ("other", "server") and self.cfg.get()["games"].get("monitor2", "rdp") == "rdp"
+                and len(self.displays.others()) > 0)
+
+    def game_play(self, profile_id, server_id, pin):
+        """Game mode without Windows: the game-mode PIN if one is set (5 wrong tries: a minute's wait)."""
+        profile = self.cfg.profile(profile_id)
+        if not profile:
+            return {"ok": False, "error": "internal", "details": "No such person"}
+        ids = [server_id] if server_id in profile["servers"] else []
+        ids += [profile.get("defaultServer")] + profile["servers"]
+        server_id = next((i for i in ids if i and self.games.flow(i) != "off"), None)
+        if not server_id:
+            return {"ok": False, "error": "off"}
+        if self.game_needs_password(server_id):
+            return {"ok": False, "error": "password", "serverId": server_id}
+        stored = self.cfg.get()["games"].get("pinHash")
+        if stored:
+            now = time.time()
+            if self.pin_lock_until > now:
+                return {"ok": False, "error": "pinwait", "wait": int(self.pin_lock_until - now) + 1}
+            if not check_pin(stored, str(pin or "")):
+                self.pin_failures += 1
+                if self.pin_failures >= 5:
+                    self.pin_failures = 0
+                    self.pin_lock_until = now + 60
+                return {"ok": False, "error": "pin"}
+            self.pin_failures = 0
+        self.cfg.mutate(lambda d: d.update(lastProfile=profile_id))
+        print(f"games: game mode from the sign-in screen for {profile['name']}", flush=True)
+        return {**self.games.start(server_id, source="login"), "serverId": server_id}
+
     # state -------------------------------------------------------------------
 
     def state(self):
@@ -120,7 +159,9 @@ class Dot:
             "audio": {**self.audio.status(), **cfg["audio"]},
             "features": cfg["features"],
             "bluetooth": self.bluetooth.status(),
-            "games": {**self.games.status(), **{k: v for k, v in cfg["games"].items() if k != "hosts"}},
+            "games": {**self.games.status(), **{k: v for k, v in cfg["games"].items() if k not in ("hosts", "pinHash")},
+                      "pinSet": bool(self.cfg.get()["games"].get("pinHash")), "pinLength": cfg["games"].get("pinLength", 4),
+                      "needsPassword": [s["id"] for s in cfg["servers"] if self.game_needs_password(s["id"])]},
             "client": {"name": os.path.basename(self.client["bin"]), "major": self.client["major"],
                        "hw": bool(self.client.get("hw"))} if self.client else None,
             "hwDecodeBuilt": rdp.hw_built(),
@@ -472,6 +513,8 @@ def make_handler(dot: Dot, ui_dir: str):
             if path == "/api/admin/unlock":
                 token = dot.unlock(data.get("pin", ""))
                 return self.send_json({"ok": bool(token), "token": token})
+            if path == "/api/games/play":
+                return self.send_json(dot.game_play(data.get("profileId"), data.get("serverId"), data.get("pin")))
             if path == "/api/profile/last":
                 if dot.cfg.profile(data.get("profileId")):
                     dot.cfg.mutate(lambda d: d.update(lastProfile=data["profileId"]))
@@ -485,6 +528,15 @@ def make_handler(dot: Dot, ui_dir: str):
                     server = dot.cfg.upsert_server(data)
                     dot.reach[server["id"]] = system.probe(server["host"], server["port"])
                     return self.send_json({"ok": True, "server": server})
+                if path == "/api/games/pin":
+                    pin = str(data.get("pin") or "")
+                    if pin and not (pin.isdigit() and 4 <= len(pin) <= 8):
+                        return self.send_json({"ok": False, "error": "4 to 8 digits"})
+                    dot.cfg.mutate(lambda d: d["games"].update(pinHash=hash_pin(pin) if pin else None, pinLength=len(pin) or 4))
+                    return self.send_json({"ok": True})
+                if path == "/api/terminal":
+                    # a terminal on the Pi's screen, as the kiosk user (behind Settings' PIN)
+                    return self.send_json({"ok": system.open_terminal()})
                 if path == "/api/servers/forget-cert":
                     sid = data.get("id")
                     dot.cfg.mutate(lambda d: [s.pop("certFingerprint", None) for s in d["servers"] if s["id"] == sid])

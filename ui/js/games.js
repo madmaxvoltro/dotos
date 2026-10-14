@@ -84,10 +84,15 @@ export function gamesPanel(root) {
           ${seg("games.bitrate", g.bitrate, [["auto", "Auto"], [20, "20"], [50, "50"], [80, "80"], [150, "150 Mbps"]])}</div>
       </div>
 
+      <span class="label section-gap" style="margin-bottom:-4px">From the sign-in screen</span>
+      <div class="setting"><div class="grow"><div class="t">Game mode PIN</div><div class="s">Game mode starts without your Windows password, unless Windows stays on the second monitor while you play. A PIN keeps others out; you enter it with the controller's arrows.</div></div>
+        ${g.pinSet ? html`<div class="row"><button class="btn btn-raised btn-sm" data-on-click="setPin">Change</button><button class="btn btn-ghost btn-sm" data-on-click="clearPin">Remove</button></div>`
+                   : html`<button class="btn btn-raised btn-sm" data-on-click="setPin">Set a PIN</button>`}</div>
+
       <span class="label section-gap" style="margin-bottom:-4px">On Windows</span>
       <div class="panel" style="padding:16px">
         <div class="row"><div class="grow"><div style="font-size:15px;font-weight:600">Game.exe and the game host</div>
-          <div class="small" style="margin-top:4px;line-height:1.5">Run this once in PowerShell as administrator on the gaming PC. It installs Game.exe (start game mode from inside Windows), Sunshine, and pairing help. ${helperSeen ? `Last seen ${new Date(g.helper.at * 1000).toLocaleDateString()}.` : ""}</div></div>
+          <div class="small" style="margin-top:4px;line-height:1.5">Run this once in PowerShell as administrator on the gaming PC. It installs Game.exe (start game mode from inside Windows) and pairing help. Install Sunshine or Apollo yourself first. ${helperSeen ? `Last seen ${new Date(g.helper.at * 1000).toLocaleDateString()}.` : ""}</div></div>
           ${helperSeen ? html`<span class="row small"><span class="dotlat"></span>Installed</span>` : ""}</div>
         <div class="mono" style="margin-top:12px;padding:12px 14px;border-radius:12px;background:var(--raised);font-size:12.5px;word-break:break-all;user-select:all">${WINDOWS_INSTALL}</div>
       </div>
@@ -113,6 +118,24 @@ export function gamesPanel(root) {
         render();
       },
       url: (e) => save({ games: { browserUrl: e.target.value.trim() } }),
+      setPin: () => modal(html`<h2 class="title" style="font-size:22px">Game mode PIN</h2>
+        <p class="lead">4 to 8 digits. Asked when game mode starts from the sign-in screen.</p>
+        <form data-on-submit="savePin"><label class="field" style="margin-top:8px"><span class="sr">PIN</span>
+          <input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="PIN" autocomplete="off"></label>
+        <div class="actions"><button type="button" class="btn btn-ghost" data-on-click="close">Cancel</button>
+        <button class="btn btn-accent">Save</button></div></form>`, {
+        savePin: async (e, el, close) => {
+          e.preventDefault();
+          const pin = e.target.pin.value.trim();
+          if (!/^[0-9]{4,8}$/.test(pin)) return toast("Use 4 to 8 digits.");
+          const res = await api("/api/games/pin", { pin });
+          if (!res.ok) return toast(res.error || "Couldn't save the PIN");
+          close(); await refresh(); render(); toast("Game mode PIN saved");
+        },
+      }),
+      clearPin: () => confirmModal("Remove the game mode PIN?", "Anyone at this Dot can then start game mode from the sign-in screen.", "Remove", async () => {
+        await api("/api/games/pin", { pin: "" }); await refresh(); render();
+      }),
       check: (e, el) => loadApps(el.dataset.target),
       pair: (e, el) => pair(el.dataset.target),
       addHost: () => hostModal(null),

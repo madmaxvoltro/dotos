@@ -219,7 +219,7 @@ fi
   # monitor control (DDC/CI + HDMI-CEC) and a mixer we can mute (HDMI audio on the Pi has none)
   PKGS="$PKGS ddcutil v4l-utils pipewire wireplumber pipewire-pulse pipewire-alsa pulseaudio-utils"
   # Bluetooth keyboards, mice, headsets (PipeWire's Bluetooth audio) and game controllers
-  PKGS="$PKGS bluez libspa-0.2-bluetooth"
+  PKGS="$PKGS bluez libspa-0.2-bluetooth foot"
   # mirror mode for a second monitor
   if apt_has wl-mirror; then PKGS="$PKGS wl-mirror"; else info "wl-mirror not available: mirror mode disabled"; fi
   if apt_has chromium; then PKGS="$PKGS chromium"; else PKGS="$PKGS chromium-browser"; fi

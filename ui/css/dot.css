@@ -270,3 +270,10 @@ button.item:hover, .item.on { background: var(--raised); }
 .padhints b { min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box; border-radius: 11px; border: 1.5px solid rgba(255,255,255,.8); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
 .padhints b.on { background: #fff; color: #000; border-color: #fff; }
 body[data-input="pad"] { cursor: none; }
+
+/* the game mode PIN pad: one digit at a time, changed with up/down */
+.pinpad { display: flex; justify-content: center; gap: 12px; margin: 18px 0 6px; }
+.pindigit { width: 56px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.pindigit b { width: 56px; height: 68px; border-radius: 16px; background: var(--raised); display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 600; }
+.pindigit.on b { background: #fff; color: #000; box-shadow: 0 0 0 3px #000, 0 0 0 6px #fff; }
+.pindigit .arrow { height: 14px; font-size: 11px; color: var(--muted); }

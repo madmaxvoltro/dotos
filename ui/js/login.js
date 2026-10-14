@@ -62,12 +62,7 @@ export function login(root, { go }) {
     servers: () => togglePop("servers"),
     settings: openSettings,
     people: () => { ui.people = true; renderPeople(); },
-    game: () => {
-      ui.game = !ui.game;
-      ui.error = null;
-      renderWho(); renderNotices(); renderBusy();
-      $("#pw", root).focus();
-    },
+    game: () => startGame(),
     openWifi: () => { ui.tray = true; ui.popover = "wifi"; renderDock(); renderPop(); },
     details: () => {
       const d = ui.error?.details || store.state.lastEnd?.detail;
@@ -101,6 +96,89 @@ export function login(root, { go }) {
     bind($("#links", root), handlers);
   }
 
+  /** The server game mode starts for: the chosen one if it plays games, else this person's first that does. */
+  function gameServer() {
+    const p = profile();
+    const on = (s) => s && (s.games?.mode || "off") !== "off";
+    const s = server();
+    return on(s) ? s : (p?.servers || []).map((id) => store.state.servers.find((x) => x.id === id)).find(on);
+  }
+
+  /** Game mode: no Windows password, unless Windows stays on the second monitor while playing.
+   *  With a game mode PIN set, the PIN pad comes first. */
+  function startGame() {
+    if (ui.game) { ui.game = false; ui.error = null; renderWho(); renderNotices(); renderBusy(); return; }
+    const s = gameServer();
+    if (!s) return;
+    if ((store.state.games.needsPassword || []).includes(s.id)) {
+      ui.game = true;
+      ui.error = null;
+      ui.serverId = s.id;
+      renderWho(); renderNotices(); renderBusy();
+      $("#pw", root).focus();
+      return;
+    }
+    if (store.state.games.pinSet) pinPad(s);
+    else play(s, "");
+  }
+
+  async function play(s, pin) {
+    const res = await api("/api/games/play", { profileId: profile().id, serverId: s.id, pin });
+    if (res.ok) { refresh(); return true; }
+    if (res.error === "password") { ui.game = true; renderWho(); renderNotices(); renderBusy(); $("#pw", root).focus(); return true; }
+    if (res.error === "pin" || res.error === "pinwait") return res;
+    const [, title, sub] = ACCOUNT_ERRORS[res.error] || ACCOUNT_ERRORS.unknown;
+    toast(sub ? `${title}. ${sub}` : title);
+    return true;
+  }
+
+  /** The PIN pad: up/down change a digit, left/right move, A to start, B to cancel. Digits type too. */
+  function pinPad(s) {
+    const n = store.state.games.pinLength || 4;
+    const digits = Array(n).fill(0);
+    let at = 0;
+    let busy = false;
+    const m = modal(html`<h2 class="title" style="font-size:22px;text-align:center">Game mode PIN</h2>
+      <div class="pinpad" id="pinpad"></div>
+      <p class="small" id="pinmsg" style="text-align:center;min-height:18px"></p>
+      <p class="small" style="text-align:center;color:var(--muted)">▲ ▼ change · ◀ ▶ move · ${pad.glyph("a")} start · ${pad.glyph("b")} cancel</p>`);
+    const draw = () => {
+      mount($("#pinpad", m.el), html`${digits.map((d, i) => html`<div class="pindigit ${i === at ? "on" : ""}">
+        <span class="arrow">${i === at ? "▲" : ""}</span><b>${i === at ? d : "•"}</b><span class="arrow">${i === at ? "▼" : ""}</span></div>`)}`);
+    };
+    const say = (t) => { $("#pinmsg", m.el).textContent = t; };
+    const submit = async () => {
+      if (busy) return;
+      busy = true;
+      const res = await play(s, digits.join(""));
+      busy = false;
+      if (res === true) return done();
+      if (res?.error === "pinwait") say(`Too many tries. Wait ${res.wait} s.`);
+      else { say("Wrong PIN"); $("#pinpad", m.el).animate([{ transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "none" }], 240); }
+    };
+    const key = (k) => {
+      if (k === "up") digits[at] = (digits[at] + 1) % 10;
+      else if (k === "down") digits[at] = (digits[at] + 9) % 10;
+      else if (k === "left") at = Math.max(0, at - 1);
+      else if (k === "right") at = Math.min(n - 1, at + 1);
+      else if (k === "a") return submit();
+      else if (k === "b") return done();
+      draw();
+    };
+    const onKey = (e) => {
+      const map = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", Enter: "a", Escape: "b" };
+      if (map[e.key]) { e.preventDefault(); e.stopPropagation(); key(map[e.key]); }
+      else if (/^[0-9]$/.test(e.key)) { digits[at] = Number(e.key); if (at < n - 1) at += 1; draw(); e.preventDefault(); }
+      else if (e.key === "Backspace") { at = Math.max(0, at - 1); draw(); e.preventDefault(); }
+    };
+    const offPad = pad.on(key);
+    window.addEventListener("keydown", onKey, true);
+    const done = () => { offPad(); window.removeEventListener("keydown", onKey, true); m.close(); };
+    new MutationObserver((_, obs) => { if (!m.el.isConnected) { offPad(); window.removeEventListener("keydown", onKey, true); obs.disconnect(); } })
+      .observe(document.getElementById("app"), { childList: true });
+    draw();
+  }
+
   /** Game mode shows up once any of this person's servers has it turned on. */
   function gameReady() {
     const p = profile();
@@ -116,7 +194,7 @@ export function login(root, { go }) {
       const g = s?.games || {};
       const host = g.mode === "other" ? st.games.hosts.find((h) => h.id === g.host)?.name : s?.name;
       card = g.mode && g.mode !== "off"
-        ? notice("gamepad", `Game mode on ${host || s.name}`, "Sign in with your Windows password to start playing.")
+        ? notice("gamepad", `Game mode on ${host || s.name}`, "Windows stays on your second monitor while you play, so sign in with your Windows password.")
         : notice(...ACCOUNT_ERRORS.off);
       mount($("#notices", root), card);
       return;
@@ -359,6 +437,7 @@ export function login(root, { go }) {
   }
   cleanups.push(pad.onMode(renderPadHints));
   cleanups.push(pad.on((b) => {
+    if (document.querySelector(".scrim")) return;  // the PIN pad (or another dialog) has the controller
     if (b === "y" && gameReady()) handlers.game();
     else if (b === "x" && store.state.profiles.length > 1) handlers.people();
     else if (b === "a" && $("#pw", root).value) signIn();
